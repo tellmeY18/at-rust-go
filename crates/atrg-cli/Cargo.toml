@@ -1,0 +1,23 @@
+[package]
+name = "atrg-cli"
+description = "CLI for at-rust-go: scaffold, dev, migrate, build AT Protocol API projects"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "atrg"
+path = "src/main.rs"
+
+[dependencies]
+atrg-core = { workspace = true }
+atrg-db = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+rand = { workspace = true }
+hex = { workspace = true }
+include_dir = { workspace = true }
+atrg-codegen = { workspace = true }

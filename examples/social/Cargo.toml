@@ -1,0 +1,28 @@
+[package]
+name = "social-example"
+description = "Social API scaffold example for at-rust-go"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+atrg-core = { workspace = true }
+atrg-auth = { workspace = true }
+atrg-xrpc = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+atrg-testing = { workspace = true }
+atrg-db = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+hyper = "1"

@@ -1,0 +1,15 @@
+[app]
+name = "minimal-example"
+host = "127.0.0.1"
+port = 3000
+secret_key = "dev-only-secret-key-not-for-production-use-change-me"
+cors_origins = []
+environment = "development"
+
+[auth]
+client_id = "http://localhost:3000/client-metadata.json"
+redirect_uri = "http://localhost:3000/auth/callback"
+scope = "atproto transition:generic"
+
+[database]
+url = "sqlite://minimal-example.db"

@@ -1,0 +1,36 @@
+# Build artifacts
+/target
+**/target
+
+# SQLite databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Coverage
+/coverage
+lcov.info
+*.profraw
+
+# Cargo
+**/*.rs.bk
+
+# atrg cache
+.cache/
+.direnv/

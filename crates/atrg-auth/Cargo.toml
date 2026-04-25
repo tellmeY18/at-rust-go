@@ -1,0 +1,32 @@
+[package]
+name = "atrg-auth"
+description = "OAuth authentication wiring for at-rust-go"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+atrg-core = { workspace = true }
+atrg-db = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+jsonwebtoken = { workspace = true }
+rand = { workspace = true }
+base64 = "0.22"
+time = "0.3"
+
+[dev-dependencies]
+atrg-identity = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+hyper = "1"
+reqwest = { workspace = true }

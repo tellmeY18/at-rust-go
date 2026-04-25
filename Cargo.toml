@@ -1,0 +1,93 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/atrg-core",
+    "crates/atrg-auth",
+    "crates/atrg-stream",
+    "crates/atrg-db",
+    "crates/atrg-xrpc",
+    "crates/atrg-identity",
+    "crates/atrg-codegen",
+    "crates/atrg-testing",
+    "crates/atrg-cli",
+    "examples/minimal",
+    "examples/social",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tellmeY18/at-rust-go"
+authors = ["tellmeY18"]
+rust-version = "1.80"
+
+[workspace.dependencies]
+# Internal crates
+atrg-core = { path = "crates/atrg-core" }
+atrg-auth = { path = "crates/atrg-auth" }
+atrg-stream = { path = "crates/atrg-stream" }
+atrg-db = { path = "crates/atrg-db" }
+atrg-xrpc = { path = "crates/atrg-xrpc" }
+atrg-identity = { path = "crates/atrg-identity" }
+atrg-codegen = { path = "crates/atrg-codegen" }
+atrg-testing = { path = "crates/atrg-testing" }
+
+# AT Protocol — DO NOT reimplement anything these provide
+atproto-identity = "0.14.2"
+atproto-oauth = "0.14.2"
+atproto-oauth-aip = "0.14.2"
+atproto-oauth-axum = "0.14.2"
+atproto-client = "0.14.2"
+atproto-xrpcs = "0.14.2"
+atproto-jetstream = "0.14.2"
+atproto-record = "0.14.2"
+atproto-extras = "0.14.2"
+atproto-lexicon = "0.14.2"
+
+# HTTP
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Async
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# Database
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "migrate"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Config
+toml = "0.8"
+
+# Errors & Logging
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Caching
+moka = { version = "0.12", features = ["future"] }
+
+# JWT
+jsonwebtoken = "9"
+
+# Codegen
+quote = "1"
+proc-macro2 = "1"
+prettyplease = "0.2"
+syn = { version = "2", features = ["full"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Misc
+url = "2"
+rand = "0.8"
+hex = "0.4"
+include_dir = "0.7"

@@ -1,0 +1,27 @@
+[package]
+name = "atrg-testing"
+description = "Test utilities for at-rust-go applications"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+atrg-core = { workspace = true }
+atrg-auth = { workspace = true }
+atrg-db = { workspace = true }
+atrg-identity = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+reqwest = { workspace = true }
+
+[dev-dependencies]
+http-body-util = "0.1"
+hyper = "1"
