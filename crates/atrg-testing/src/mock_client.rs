@@ -36,7 +36,7 @@ impl MockAtprotoClient {
         // Store the key for later; the response is set via `returns`
         self.responses
             .lock()
-            .unwrap()
+            .expect("mutex poisoned")
             .insert(format!("{}:{}", method, path), serde_json::json!(null));
         self
     }
@@ -45,7 +45,7 @@ impl MockAtprotoClient {
     pub fn returns(&self, method: &str, path: &str, response: serde_json::Value) {
         self.responses
             .lock()
-            .unwrap()
+            .expect("mutex poisoned")
             .insert(format!("{}:{}", method, path), response);
     }
 
@@ -81,12 +81,12 @@ impl MockAtprotoClient {
 
     /// Get all recorded calls.
     pub fn calls(&self) -> Vec<RecordedCall> {
-        self.calls.lock().unwrap().clone()
+        self.calls.lock().expect("mutex poisoned").clone()
     }
 
     /// Assert that a specific method+path was called exactly `n` times.
     pub fn assert_called(&self, method: &str, path: &str, n: usize) {
-        let calls = self.calls.lock().unwrap();
+        let calls = self.calls.lock().expect("mutex poisoned");
         let count = calls
             .iter()
             .filter(|c| c.method == method && c.path == path)
@@ -100,22 +100,25 @@ impl MockAtprotoClient {
 
     /// Assert that a method was called at least once (any path).
     pub fn assert_called_any(&self, method: &str) {
-        let calls = self.calls.lock().unwrap();
+        let calls = self.calls.lock().expect("mutex poisoned");
         let count = calls.iter().filter(|c| c.method == method).count();
         assert!(count > 0, "expected at least one call to {}, got 0", method);
     }
 
     fn record_call(&self, method: &str, path: &str, body: Option<serde_json::Value>) {
-        self.calls.lock().unwrap().push(RecordedCall {
-            method: method.to_string(),
-            path: path.to_string(),
-            body,
-        });
+        self.calls
+            .lock()
+            .expect("mutex poisoned")
+            .push(RecordedCall {
+                method: method.to_string(),
+                path: path.to_string(),
+                body,
+            });
     }
 
     fn get_response(&self, method: &str, path: &str) -> anyhow::Result<serde_json::Value> {
         let key = format!("{}:{}", method, path);
-        let responses = self.responses.lock().unwrap();
+        let responses = self.responses.lock().expect("mutex poisoned");
         match responses.get(&key) {
             Some(v) => Ok(v.clone()),
             None => Ok(serde_json::json!({})),

@@ -45,7 +45,7 @@ pub async fn test_state() -> AppState {
     }
 }
 
-/// Build a test [`AppState`] and an [`AtrgApp`] ready for `oneshot` testing.
+/// Build a test [`AppState`] and an [`atrg_core::AtrgApp`] ready for `oneshot` testing.
 pub async fn test_app() -> (atrg_core::AtrgApp, AppState) {
     let state = test_state().await;
     let app = atrg_core::AtrgApp::new();
@@ -60,7 +60,7 @@ pub async fn seed_session(pool: &SqlitePool, did: &str, handle: &str) -> String 
     let session_id = session::generate_session_id();
     let expires = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system clock before UNIX epoch")
         .as_secs() as i64
         + 86400; // 24 hours
 

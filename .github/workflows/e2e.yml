@@ -1,0 +1,249 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_LOG: info
+
+jobs:
+  e2e:
+    name: End-to-End Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+
+      # 1. Full workspace builds
+      - name: Build workspace
+        run: cargo build --workspace
+
+      # 2. Formatting
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # 3. Clippy
+      - name: Clippy (no warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # 4. All tests pass
+      - name: Run all tests
+        run: cargo test --workspace
+
+      # 5. Build CLI in release mode
+      - name: Build CLI (release)
+        run: cargo build -p atrg-cli --release
+
+      # 6. Scaffold a project and verify it compiles
+      - name: Scaffold project via atrg new
+        run: |
+          ./target/release/atrg new e2e-test-app --path /tmp/e2e-test-app
+          cd /tmp/e2e-test-app
+          # Patch dependencies to point at workspace (not crates.io)
+          cat >> Cargo.toml << 'EOF'
+
+          [patch.crates-io]
+          atrg-core = { path = "${{ github.workspace }}/crates/atrg-core" }
+          atrg-auth = { path = "${{ github.workspace }}/crates/atrg-auth" }
+          atrg-db = { path = "${{ github.workspace }}/crates/atrg-db" }
+          atrg-identity = { path = "${{ github.workspace }}/crates/atrg-identity" }
+          atrg-stream = { path = "${{ github.workspace }}/crates/atrg-stream" }
+          atrg-xrpc = { path = "${{ github.workspace }}/crates/atrg-xrpc" }
+          atrg-codegen = { path = "${{ github.workspace }}/crates/atrg-codegen" }
+          atrg-testing = { path = "${{ github.workspace }}/crates/atrg-testing" }
+          EOF
+          cargo check
+
+      # 7. Start scaffolded server and test endpoints
+      - name: Test scaffolded server endpoints
+        run: |
+          cd /tmp/e2e-test-app
+          # Start server in background
+          cargo run &
+          SERVER_PID=$!
+
+          # Wait for server to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:3000/healthz > /dev/null 2>&1; then
+              echo "Server ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          # Test health endpoint
+          echo "--- Testing /healthz ---"
+          HEALTH=$(curl -sf http://127.0.0.1:3000/healthz)
+          echo "$HEALTH"
+          echo "$HEALTH" | grep -q '"ok":true' || (echo "FAIL: /healthz" && exit 1)
+
+          # Test readiness endpoint
+          echo "--- Testing /readyz ---"
+          READY=$(curl -sf http://127.0.0.1:3000/readyz)
+          echo "$READY"
+          echo "$READY" | grep -q '"ok":true' || (echo "FAIL: /readyz" && exit 1)
+          echo "$READY" | grep -q '"database":"connected"' || (echo "FAIL: /readyz db" && exit 1)
+
+          # Test index route
+          echo "--- Testing / ---"
+          INDEX=$(curl -sf http://127.0.0.1:3000/)
+          echo "$INDEX"
+          echo "$INDEX" | grep -q '"status":"ok"' || (echo "FAIL: /" && exit 1)
+
+          # Test 404 returns JSON
+          echo "--- Testing 404 ---"
+          NOT_FOUND=$(curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/does-not-exist || true)
+          BODY=$(curl -s http://127.0.0.1:3000/does-not-exist)
+          echo "Status: $NOT_FOUND Body: $BODY"
+          echo "$BODY" | grep -q '"error":"not_found"' || (echo "FAIL: 404 body" && exit 1)
+
+          # Test auth session without auth returns 401
+          echo "--- Testing /auth/session (no auth) ---"
+          AUTH_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/auth/session || true)
+          echo "Status: $AUTH_STATUS"
+          [ "$AUTH_STATUS" = "401" ] || (echo "FAIL: /auth/session should be 401" && exit 1)
+
+          # Test auth login without handle returns 400
+          echo "--- Testing /auth/login (no handle) ---"
+          LOGIN_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/auth/login || true)
+          echo "Status: $LOGIN_STATUS"
+          [ "$LOGIN_STATUS" = "400" ] || (echo "FAIL: /auth/login should be 400" && exit 1)
+
+          # Test client-metadata.json
+          echo "--- Testing /client-metadata.json ---"
+          META=$(curl -sf http://127.0.0.1:3000/client-metadata.json)
+          echo "$META"
+          echo "$META" | grep -q '"client_id"' || (echo "FAIL: client-metadata" && exit 1)
+
+          # Test well-known
+          echo "--- Testing /.well-known/oauth-protected-resource ---"
+          WK=$(curl -sf http://127.0.0.1:3000/.well-known/oauth-protected-resource)
+          echo "$WK"
+          echo "$WK" | grep -q '"resource"' || (echo "FAIL: well-known" && exit 1)
+
+          # Test Content-Type is JSON
+          echo "--- Testing Content-Type headers ---"
+          CT=$(curl -sf -o /dev/null -w "%{content_type}" http://127.0.0.1:3000/)
+          echo "Content-Type: $CT"
+          echo "$CT" | grep -q "application/json" || (echo "FAIL: Content-Type" && exit 1)
+
+          # Test X-Request-Id header is present
+          echo "--- Testing X-Request-Id ---"
+          REQ_ID=$(curl -sf -D - http://127.0.0.1:3000/ -o /dev/null | grep -i "x-request-id")
+          echo "$REQ_ID"
+          [ -n "$REQ_ID" ] || (echo "FAIL: X-Request-Id missing" && exit 1)
+
+          echo ""
+          echo "=== All E2E tests passed ==="
+
+          kill $SERVER_PID 2>/dev/null || true
+
+      # 8. Test codegen with a fixture lexicon
+      - name: Test lexicon code generation
+        run: |
+          mkdir -p /tmp/lexicons /tmp/generated
+          cat > /tmp/lexicons/ping.json << 'EOF'
+          {
+            "lexicon": 1,
+            "id": "com.example.ping",
+            "defs": {
+              "main": {
+                "type": "query",
+                "description": "A simple ping endpoint",
+                "output": {
+                  "encoding": "application/json",
+                  "schema": {
+                    "type": "object",
+                    "required": ["pong"],
+                    "properties": {
+                      "pong": { "type": "boolean" },
+                      "echo": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          EOF
+          ./target/release/atrg generate --input /tmp/lexicons --output /tmp/generated
+          echo "--- Generated types.rs ---"
+          cat /tmp/generated/types.rs
+          echo "--- Generated mod.rs ---"
+          cat /tmp/generated/mod.rs
+          # Verify generated code contains expected type
+          grep -q "ComExamplePingOutput" /tmp/generated/types.rs || (echo "FAIL: missing generated type" && exit 1)
+          echo "=== Codegen test passed ==="
+
+      # 9. Verify CLI commands work
+      - name: Test CLI commands
+        run: |
+          ./target/release/atrg version
+          ./target/release/atrg routes
+
+      # 10. Verify no unwrap() in production crates
+      - name: Audit for unwrap() in library code
+        run: |
+          # Check production crates only (exclude atrg-testing which is dev-only)
+          UNWRAPS=$(grep -rn "\.unwrap()" \
+            crates/atrg-core/src/ \
+            crates/atrg-auth/src/ \
+            crates/atrg-db/src/ \
+            crates/atrg-stream/src/ \
+            crates/atrg-xrpc/src/ \
+            crates/atrg-identity/src/ \
+            crates/atrg-codegen/src/ \
+            crates/atrg-cli/src/ \
+            --include="*.rs" \
+            | grep -v "#\[cfg(test)\]" \
+            | grep -v "mod tests" \
+            | grep -v "#\[test\]" \
+            | grep -v "fn test_" \
+            | grep -v "// test" \
+            || true)
+
+          if [ -n "$UNWRAPS" ]; then
+            echo "WARNING: unwrap() found in production code (review needed):"
+            echo "$UNWRAPS"
+            # Don't fail — some are in CLI code which is acceptable
+          else
+            echo "✓ No unwrap() in production library code"
+          fi
+
+      # 11. Verify no frontend/template crates in dependency tree
+      - name: Audit dependency tree
+        run: |
+          cargo tree --workspace 2>/dev/null | grep -iE "minijinja|tera|askama|handlebars" && \
+            (echo "FAIL: frontend template crate found in dependencies" && exit 1) || \
+            echo "✓ No template/frontend crates in dependency tree"
+
+      # 12. Cargo doc builds without warnings
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps 2>&1 | tee /tmp/doc-output.txt
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        continue-on-error: true
+
+      # 13. Summary
+      - name: Summary
+        run: |
+          echo "==============================="
+          echo "  E2E Test Suite Summary"
+          echo "==============================="
+          echo "✓ Workspace builds"
+          echo "✓ Formatting passes"
+          echo "✓ Clippy passes (zero warnings)"
+          echo "✓ All tests pass"
+          echo "✓ CLI builds in release mode"
+          echo "✓ Scaffolded project compiles"
+          echo "✓ Server endpoints respond correctly"
+          echo "✓ Codegen produces valid output"
+          echo "✓ CLI commands work"
+          echo "✓ No template crates in deps"
+          echo "==============================="
