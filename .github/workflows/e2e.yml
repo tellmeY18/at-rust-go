@@ -52,6 +52,10 @@ jobs:
             crates/atrg-xrpc/src \
             crates/atrg-identity/src \
             crates/atrg-codegen/src \
+            crates/atrg-repo/src \
+            crates/atrg-firehose/src \
+            crates/atrg-feed/src \
+            crates/atrg-label/src \
             -name '*.rs'); do
             # Get the line number of #[cfg(test)] — only check lines before it
             TEST_LINE=$(grep -n '#\[cfg(test)\]' "$f" | head -1 | cut -d: -f1)
@@ -97,7 +101,9 @@ jobs:
         run: cargo build --workspace
 
       - name: Run all tests
-        run: cargo test --workspace
+        # Use --test-threads=1 to avoid env-var race conditions in
+        # atrg-core env_override tests (they mutate process-global state).
+        run: cargo test --workspace -- --test-threads=1
 
   # ─── Build CLI release binary (reused by downstream jobs) ─────────
   build-cli:
@@ -156,6 +162,10 @@ jobs:
           atrg-xrpc = { path = "${{ github.workspace }}/crates/atrg-xrpc" }
           atrg-codegen = { path = "${{ github.workspace }}/crates/atrg-codegen" }
           atrg-testing = { path = "${{ github.workspace }}/crates/atrg-testing" }
+          atrg-repo = { path = "${{ github.workspace }}/crates/atrg-repo" }
+          atrg-firehose = { path = "${{ github.workspace }}/crates/atrg-firehose" }
+          atrg-feed = { path = "${{ github.workspace }}/crates/atrg-feed" }
+          atrg-label = { path = "${{ github.workspace }}/crates/atrg-label" }
           EOF
 
       - name: Check scaffold compiles

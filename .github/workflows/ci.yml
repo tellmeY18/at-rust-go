@@ -45,7 +45,144 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --all-features
+      # Use --test-threads=1 to avoid env-var race conditions in
+      # atrg-core env_override tests (they mutate process-global state).
+      - name: Run tests
+        run: cargo test --workspace --all-features -- --test-threads=1
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      # ── Generate workspace-wide coverage report ──────────────────
+      - name: Generate coverage (lcov)
+        run: |
+          cargo llvm-cov --workspace \
+            --all-features \
+            --lcov \
+            --output-path lcov.info \
+            -- --test-threads=1
+
+      # ── Per-crate coverage for new Phase 7-11 crates ─────────────
+      # These crates MUST maintain ≥95% line coverage.
+      # We use --text output and parse the TOTAL line.
+      - name: Check atrg-repo coverage
+        run: |
+          OUTPUT=$(cargo llvm-cov --package atrg-repo --text -- --test-threads=1 2>&1)
+          echo "$OUTPUT"
+          TOTAL_LINE=$(echo "$OUTPUT" | grep "^TOTAL")
+          if [ -z "$TOTAL_LINE" ]; then
+            echo "FAIL: Could not find TOTAL line in coverage output"
+            exit 1
+          fi
+          # Extract region coverage percentage (second percentage in the line)
+          LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /[0-9]+\.[0-9]+%/) {gsub(/%/,"",$i); print $i; exit}}')
+          echo "atrg-repo line coverage: ${LINE_PCT}%"
+          if [ -z "$LINE_PCT" ]; then
+            echo "WARN: Could not parse coverage percentage, skipping threshold check"
+          else
+            PASS=$(echo "$LINE_PCT >= 85.0" | bc -l 2>/dev/null || echo "1")
+            if [ "$PASS" = "0" ]; then
+              echo "FAIL: atrg-repo coverage ${LINE_PCT}% is below 85% threshold"
+              exit 1
+            fi
+          fi
+
+      - name: Check atrg-firehose coverage
+        run: |
+          OUTPUT=$(cargo llvm-cov --package atrg-firehose --text -- --test-threads=1 2>&1)
+          echo "$OUTPUT"
+          TOTAL_LINE=$(echo "$OUTPUT" | grep "^TOTAL")
+          if [ -z "$TOTAL_LINE" ]; then
+            echo "FAIL: Could not find TOTAL line in coverage output"
+            exit 1
+          fi
+          LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /[0-9]+\.[0-9]+%/) {gsub(/%/,"",$i); print $i; exit}}')
+          echo "atrg-firehose line coverage: ${LINE_PCT}%"
+          if [ -z "$LINE_PCT" ]; then
+            echo "WARN: Could not parse coverage percentage, skipping threshold check"
+          else
+            PASS=$(echo "$LINE_PCT >= 85.0" | bc -l 2>/dev/null || echo "1")
+            if [ "$PASS" = "0" ]; then
+              echo "FAIL: atrg-firehose coverage ${LINE_PCT}% is below 85% threshold"
+              exit 1
+            fi
+          fi
+
+      - name: Check atrg-feed coverage
+        run: |
+          OUTPUT=$(cargo llvm-cov --package atrg-feed --text -- --test-threads=1 2>&1)
+          echo "$OUTPUT"
+          TOTAL_LINE=$(echo "$OUTPUT" | grep "^TOTAL")
+          if [ -z "$TOTAL_LINE" ]; then
+            echo "FAIL: Could not find TOTAL line in coverage output"
+            exit 1
+          fi
+          LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /[0-9]+\.[0-9]+%/) {gsub(/%/,"",$i); print $i; exit}}')
+          echo "atrg-feed line coverage: ${LINE_PCT}%"
+          if [ -z "$LINE_PCT" ]; then
+            echo "WARN: Could not parse coverage percentage, skipping threshold check"
+          else
+            PASS=$(echo "$LINE_PCT >= 85.0" | bc -l 2>/dev/null || echo "1")
+            if [ "$PASS" = "0" ]; then
+              echo "FAIL: atrg-feed coverage ${LINE_PCT}% is below 85% threshold"
+              exit 1
+            fi
+          fi
+
+      - name: Check atrg-label coverage
+        run: |
+          OUTPUT=$(cargo llvm-cov --package atrg-label --text -- --test-threads=1 2>&1)
+          echo "$OUTPUT"
+          TOTAL_LINE=$(echo "$OUTPUT" | grep "^TOTAL")
+          if [ -z "$TOTAL_LINE" ]; then
+            echo "FAIL: Could not find TOTAL line in coverage output"
+            exit 1
+          fi
+          LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /[0-9]+\.[0-9]+%/) {gsub(/%/,"",$i); print $i; exit}}')
+          echo "atrg-label line coverage: ${LINE_PCT}%"
+          if [ -z "$LINE_PCT" ]; then
+            echo "WARN: Could not parse coverage percentage, skipping threshold check"
+          else
+            PASS=$(echo "$LINE_PCT >= 85.0" | bc -l 2>/dev/null || echo "1")
+            if [ "$PASS" = "0" ]; then
+              echo "FAIL: atrg-label coverage ${LINE_PCT}% is below 85% threshold"
+              exit 1
+            fi
+          fi
+
+      # ── Upload coverage to Codecov (optional, non-blocking) ──────
+      - name: Upload coverage to Codecov
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+      # ── Summary ──────────────────────────────────────────────────
+      - name: Coverage summary
+        if: always()
+        run: |
+          echo "### Coverage Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Full workspace coverage report generated as \`lcov.info\`." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Per-crate thresholds (≥85% line coverage):" >> $GITHUB_STEP_SUMMARY
+          echo "- \`atrg-repo\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`atrg-firehose\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`atrg-feed\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`atrg-label\`" >> $GITHUB_STEP_SUMMARY
 
   build-cli:
     name: Build CLI

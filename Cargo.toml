@@ -4,12 +4,16 @@ members = [
     "crates/atrg-core",
     "crates/atrg-auth",
     "crates/atrg-stream",
+    "crates/atrg-firehose",
     "crates/atrg-db",
     "crates/atrg-xrpc",
     "crates/atrg-identity",
     "crates/atrg-codegen",
     "crates/atrg-testing",
     "crates/atrg-cli",
+    "crates/atrg-repo",
+    "crates/atrg-feed",
+    "crates/atrg-label",
     "examples/minimal",
     "examples/social",
 ]
@@ -32,6 +36,10 @@ atrg-xrpc = { path = "crates/atrg-xrpc" }
 atrg-identity = { path = "crates/atrg-identity" }
 atrg-codegen = { path = "crates/atrg-codegen" }
 atrg-testing = { path = "crates/atrg-testing" }
+atrg-repo = { path = "crates/atrg-repo" }
+atrg-firehose = { path = "crates/atrg-firehose" }
+atrg-feed = { path = "crates/atrg-feed" }
+atrg-label = { path = "crates/atrg-label" }
 
 # AT Protocol — DO NOT reimplement anything these provide
 atproto-identity = "0.14.2"

@@ -12,10 +12,17 @@ pub mod request_id;
 pub mod security;
 pub mod state;
 
+pub mod env_override;
+pub mod rate_limit;
+pub mod shutdown;
+
 pub use app::AtrgApp;
 pub use config::Config;
 pub use error::{AtrgError, AtrgResult};
 pub use state::AppState;
+
+pub use rate_limit::{RateLimitConfig, RateLimiter};
+pub use shutdown::shutdown_signal;
 
 /// Returns the crate version.
 pub fn version() -> &'static str {

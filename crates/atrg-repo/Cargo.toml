@@ -1,0 +1,25 @@
+[package]
+name = "atrg-repo"
+description = "Record repository helpers: CRUD, blob uploads, AT-URI and TID utilities for at-rust-go"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+atrg-core = { workspace = true }
+atrg-auth = { workspace = true }
+atrg-identity = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+reqwest = { workspace = true }
+url = { workspace = true }
+tokio = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
