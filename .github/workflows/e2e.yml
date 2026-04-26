@@ -6,11 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   RUST_LOG: info
   # Reduce peak memory during compilation
-  CARGO_BUILD_JOBS: 2
+  CARGO_BUILD_JOBS: 1
 
 jobs:
   # ─── Fast checks (no heavy compilation) ───────────────────────────
@@ -38,23 +42,33 @@ jobs:
 
       - name: No unwrap() in production library crates
         run: |
-          UNWRAPS=$(grep -rn "\.unwrap()" \
-            crates/atrg-core/src/ \
-            crates/atrg-auth/src/ \
-            crates/atrg-db/src/ \
-            crates/atrg-stream/src/ \
-            crates/atrg-xrpc/src/ \
-            crates/atrg-identity/src/ \
-            crates/atrg-codegen/src/ \
-            --include="*.rs" \
-            | grep -v "cfg(test)" \
-            | grep -v "mod tests" \
-            | grep -v "#\[test\]" \
-            | grep -v "fn test_" \
-            || true)
-          if [ -n "$UNWRAPS" ]; then
-            echo "FAIL: unwrap() found in production library code:"
-            echo "$UNWRAPS"
+          # For each .rs file, extract only lines BEFORE #[cfg(test)] and check for .unwrap()
+          FOUND=""
+          for f in $(find \
+            crates/atrg-core/src \
+            crates/atrg-auth/src \
+            crates/atrg-db/src \
+            crates/atrg-stream/src \
+            crates/atrg-xrpc/src \
+            crates/atrg-identity/src \
+            crates/atrg-codegen/src \
+            -name '*.rs'); do
+            # Get the line number of #[cfg(test)] — only check lines before it
+            TEST_LINE=$(grep -n '#\[cfg(test)\]' "$f" | head -1 | cut -d: -f1)
+            if [ -n "$TEST_LINE" ]; then
+              HITS=$(head -n "$((TEST_LINE - 1))" "$f" | grep -n '\.unwrap()' || true)
+            else
+              HITS=$(grep -n '\.unwrap()' "$f" || true)
+            fi
+            if [ -n "$HITS" ]; then
+              while IFS= read -r line; do
+                FOUND="${FOUND}${f}:${line}\n"
+              done <<< "$HITS"
+            fi
+          done
+          if [ -n "$FOUND" ]; then
+            echo "FAIL: unwrap() found in production (non-test) code:"
+            printf "$FOUND"
             exit 1
           fi
           echo "✓ No unwrap() in production library code"
@@ -71,7 +85,7 @@ jobs:
   # ─── Build & test (needs more RAM) ────────────────────────────────
   test:
     name: Test Suite
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -88,7 +102,7 @@ jobs:
   # ─── Build CLI release binary (reused by downstream jobs) ─────────
   build-cli:
     name: Build CLI
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -110,7 +124,7 @@ jobs:
   scaffold-e2e:
     name: Scaffold & Server E2E
     needs: [build-cli, test]
-    runs-on: ubuntu-latest-4-cores
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
