@@ -81,6 +81,10 @@ mod tests {
                 url: "sqlite::memory:".into(),
             },
             jetstream: None,
+            firehose: None,
+            feed_generator: None,
+            labeler: None,
+            rate_limit: None,
         };
 
         AppState {

@@ -79,7 +79,14 @@ jobs:
         run: |
           THRESHOLD=85
           FAILED=0
-          SUMMARY=""
+
+          # Write table header to job summary
+          {
+            echo "### Coverage Report"
+            echo ""
+            echo "| Crate | Line Coverage | Threshold |"
+            echo "|-------|-------------|-----------|"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           for CRATE in atrg-repo atrg-firehose atrg-feed atrg-label; do
             echo "──────────────────────────────────────"
@@ -98,7 +105,7 @@ jobs:
 
             if [ -z "$LINE_PCT" ]; then
               echo "⚠ Could not parse coverage for ${CRATE}, skipping"
-              SUMMARY="${SUMMARY}| \`${CRATE}\` | ⚠ parse error | ${THRESHOLD}% |\n"
+              echo "| \`${CRATE}\` | ⚠ parse error | ${THRESHOLD}% |" >> "$GITHUB_STEP_SUMMARY"
               continue
             fi
 
@@ -108,25 +115,16 @@ jobs:
 
             if [ "$PASS" = "1" ]; then
               echo "✓ ${CRATE}: ${LINE_PCT}% >= ${THRESHOLD}%"
-              SUMMARY="${SUMMARY}| \`${CRATE}\` | ✅ ${LINE_PCT}% | ${THRESHOLD}% |\n"
+              echo "| \`${CRATE}\` | ✅ ${LINE_PCT}% | ${THRESHOLD}% |" >> "$GITHUB_STEP_SUMMARY"
             else
               echo "✗ ${CRATE}: ${LINE_PCT}% < ${THRESHOLD}% — FAIL"
-              SUMMARY="${SUMMARY}| \`${CRATE}\` | ❌ ${LINE_PCT}% | ${THRESHOLD}% |\n"
+              echo "| \`${CRATE}\` | ❌ ${LINE_PCT}% | ${THRESHOLD}% |" >> "$GITHUB_STEP_SUMMARY"
               FAILED=1
             fi
           done
 
           echo ""
           echo "══════════════════════════════════════"
-
-          # Write GitHub Actions job summary
-          {
-            echo "### Coverage Report"
-            echo ""
-            echo "| Crate | Line Coverage | Threshold |"
-            echo "|-------|-------------|-----------|"
-            printf "$SUMMARY"
-          } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$FAILED" = "1" ]; then
             echo "FAIL: One or more crates are below the ${THRESHOLD}% coverage threshold"

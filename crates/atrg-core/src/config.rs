@@ -30,6 +30,18 @@ pub struct Config {
 
     /// Optional Jetstream real-time event consumer settings.
     pub jetstream: Option<JetstreamConfig>,
+
+    /// Optional relay firehose consumer settings.
+    pub firehose: Option<FirehoseConfig>,
+
+    /// Optional feed generator settings.
+    pub feed_generator: Option<FeedGeneratorConfig>,
+
+    /// Optional labeler settings.
+    pub labeler: Option<LabelerConfig>,
+
+    /// Optional rate limiting settings.
+    pub rate_limit: Option<RateLimitTomlConfig>,
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +200,91 @@ fn default_channel_capacity() -> usize {
 
 fn default_max_lag_events() -> usize {
     10_000
+}
+
+// ---------------------------------------------------------------------------
+// FirehoseConfig
+// ---------------------------------------------------------------------------
+
+/// `[firehose]` section of `atrg.toml`. Present when relay firehose
+/// consumption is enabled (full `com.atproto.sync.subscribeRepos`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct FirehoseConfig {
+    /// Relay WebSocket URL, e.g. `"wss://bsky.network"`.
+    pub relay: String,
+
+    /// Sequence number to resume from. `None` means start from head.
+    pub cursor: Option<i64>,
+
+    /// Bounded back-pressure channel capacity.
+    #[serde(default = "default_firehose_channel_capacity")]
+    pub channel_capacity: usize,
+}
+
+fn default_firehose_channel_capacity() -> usize {
+    1024
+}
+
+// ---------------------------------------------------------------------------
+// FeedGeneratorConfig
+// ---------------------------------------------------------------------------
+
+/// `[feed_generator]` section of `atrg.toml`. Present when the server
+/// acts as an AT Protocol feed generator.
+#[derive(Debug, Clone, Deserialize)]
+pub struct FeedGeneratorConfig {
+    /// DID of the feed generator service (typically `did:web:<hostname>`).
+    pub did: String,
+}
+
+// ---------------------------------------------------------------------------
+// LabelerConfig
+// ---------------------------------------------------------------------------
+
+/// `[labeler]` section of `atrg.toml`. Present when the server acts as
+/// an AT Protocol labeler.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LabelerConfig {
+    /// DID of the labeler service.
+    pub did: String,
+
+    /// Path to the signing key file (PEM format).
+    pub signing_key_path: Option<String>,
+
+    /// Inline signing key (base64-encoded, for env var injection).
+    pub signing_key_base64: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// RateLimitConfig (TOML)
+// ---------------------------------------------------------------------------
+
+/// `[rate_limit]` section of `atrg.toml`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RateLimitTomlConfig {
+    /// Maximum sustained requests per second.
+    #[serde(default = "default_rps")]
+    pub requests_per_second: f64,
+
+    /// Maximum burst size.
+    #[serde(default = "default_burst")]
+    pub burst: u32,
+
+    /// Whether rate limiting is enabled (default: true in production).
+    #[serde(default = "default_rate_limit_enabled")]
+    pub enabled: bool,
+}
+
+fn default_rps() -> f64 {
+    10.0
+}
+
+fn default_burst() -> u32 {
+    50
+}
+
+fn default_rate_limit_enabled() -> bool {
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +599,60 @@ secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 cors_origins = ["*"]
 "#;
         Config::parse_toml(toml).expect("wildcard should be accepted");
+    }
+
+    #[test]
+    fn parse_config_with_firehose_and_feeds() {
+        let toml = r#"
+[app]
+name = "test"
+secret_key = "abcdefghijklmnopqrstuvwxyz123456"
+
+[firehose]
+relay = "wss://bsky.network"
+
+[feed_generator]
+did = "did:web:feeds.example.com"
+
+[labeler]
+did = "did:web:labels.example.com"
+signing_key_path = "/etc/keys/labeler.pem"
+
+[rate_limit]
+requests_per_second = 20.0
+burst = 100
+enabled = true
+"#;
+        let cfg = Config::parse_toml(toml).unwrap();
+        let fh = cfg.firehose.unwrap();
+        assert_eq!(fh.relay, "wss://bsky.network");
+        assert!(fh.cursor.is_none());
+        assert_eq!(fh.channel_capacity, 1024);
+
+        let fg = cfg.feed_generator.unwrap();
+        assert_eq!(fg.did, "did:web:feeds.example.com");
+
+        let lb = cfg.labeler.unwrap();
+        assert_eq!(lb.did, "did:web:labels.example.com");
+        assert_eq!(lb.signing_key_path.unwrap(), "/etc/keys/labeler.pem");
+
+        let rl = cfg.rate_limit.unwrap();
+        assert!((rl.requests_per_second - 20.0).abs() < f64::EPSILON);
+        assert_eq!(rl.burst, 100);
+    }
+
+    #[test]
+    fn new_sections_are_all_optional() {
+        let toml = r#"
+[app]
+name = "test"
+secret_key = "abcdefghijklmnopqrstuvwxyz123456"
+"#;
+        let cfg = Config::parse_toml(toml).unwrap();
+        assert!(cfg.firehose.is_none());
+        assert!(cfg.feed_generator.is_none());
+        assert!(cfg.labeler.is_none());
+        assert!(cfg.rate_limit.is_none());
     }
 
     #[test]

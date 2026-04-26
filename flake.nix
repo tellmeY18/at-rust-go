@@ -3,6 +3,13 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+
+    # Uncomment for E2E testing with a real PDS (requires Rust edition 2024 support).
+    # Canonical source: https://tangled.org/tranquil.farm/tranquil-pds
+    # tranquil-pds = {
+    #   url = "git+https://tangled.org/tranquil.farm/tranquil-pds";
+    #   inputs.nixpkgs.follows = "nixpkgs";
+    # };
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
@@ -83,6 +90,36 @@
             echo "🦀  Rust development environment"
             echo "   Rust:  $(rustc --version)"
             echo "   OS:    $(uname -s)"
+            echo "   For E2E tests with a real PDS: nix develop .#e2e"
+            echo ""
+          '';
+        };
+
+        # E2E testing shell — includes PostgreSQL for tranquil-pds integration tests.
+        # To also include tranquil-pds itself, uncomment the tranquil-pds input above
+        # and add `tranquil-pds.packages.${system}.default` to buildInputs below.
+        # Source: https://tangled.org/tranquil.farm/tranquil-pds
+        # NOTE: tranquil-pds requires Rust edition 2024 and may not build on all systems.
+        devShells.e2e = pkgs.mkShell {
+          nativeBuildInputs = rustDevTools ++ [ rustToolchain ];
+          buildInputs = runtimeLibs ++ [
+            pkgs.postgresql
+            # tranquil-pds.packages.${system}.default  # uncomment when input is enabled
+          ];
+
+          env =
+            pkgs.lib.optionalAttrs isDarwin {
+              SDKROOT = "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk";
+            }
+            // pkgs.lib.optionalAttrs (!isDarwin) {
+              RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
+            };
+
+          shellHook = ''
+            echo "🦀  Rust E2E testing environment (with PostgreSQL)"
+            echo "   Rust:  $(rustc --version)"
+            echo "   psql:  $(psql --version)"
+            echo "   tranquil-pds available for integration tests"
             echo ""
           '';
         };

@@ -43,6 +43,9 @@ pub struct AtrgApp {
     cleanup_fn: Option<CleanupFn>,
     /// Jetstream event handler registered via [`AtrgApp::on_event`].
     event_handler: Option<atrg_stream::EventHandler<AppState>>,
+    /// Firehose event handler (registered via [`AtrgApp::on_firehose_event`]).
+    #[cfg(feature = "firehose")]
+    firehose_handler: Option<atrg_firehose::FirehoseHandler<AppState>>,
 }
 
 impl AtrgApp {
@@ -53,6 +56,8 @@ impl AtrgApp {
             builtin_router: None,
             cleanup_fn: None,
             event_handler: None,
+            #[cfg(feature = "firehose")]
+            firehose_handler: None,
         }
     }
 
@@ -111,6 +116,58 @@ impl AtrgApp {
             Box::pin(handler(event, state)) as BoxFuture<'static, anyhow::Result<()>>
         }));
         self
+    }
+
+    /// Register a firehose event handler.
+    ///
+    /// The handler is called for every event received from the AT Protocol
+    /// relay firehose (`com.atproto.sync.subscribeRepos`). It is spawned as
+    /// a background task inside [`AtrgApp::run`] when `[firehose]` is present
+    /// in `atrg.toml`.
+    #[cfg(feature = "firehose")]
+    pub fn on_firehose_event<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn(atrg_firehose::FirehoseEvent, AppState) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+    {
+        self.firehose_handler = Some(std::sync::Arc::new(move |event, state| {
+            Box::pin(handler(event, state)) as BoxFuture<'static, anyhow::Result<()>>
+        }));
+        self
+    }
+
+    /// Mount a feed generator's routes.
+    ///
+    /// Pass the router produced by `FeedGenerator::into_router()` (from the
+    /// `atrg-feed` crate).
+    /// This is a semantic alias for [`mount`](Self::mount) that makes the
+    /// builder read more clearly.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// AtrgApp::new()
+    ///     .with_feed_generator(feed_gen.into_router())
+    /// ```
+    pub fn with_feed_generator(self, feed_router: Router<AppState>) -> Self {
+        self.mount(feed_router)
+    }
+
+    /// Mount a labeler service's routes.
+    ///
+    /// Pass the router produced by `labeler_routes()` (from the `atrg-label`
+    /// crate).
+    /// This is a semantic alias for [`mount`](Self::mount) that makes the
+    /// builder read more clearly.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// AtrgApp::new()
+    ///     .with_labeler(atrg_label::routes::labeler_routes(service))
+    /// ```
+    pub fn with_labeler(self, labeler_router: Router<AppState>) -> Self {
+        self.mount(labeler_router)
     }
 
     /// Boot the server.
@@ -221,6 +278,21 @@ impl AtrgApp {
             }
         }
 
+        // 8c. Firehose consumer --------------------------------------------------
+        #[cfg(feature = "firehose")]
+        if let Some(ref fh_config) = config.firehose {
+            if let Some(handler) = self.firehose_handler {
+                let firehose_config = atrg_firehose::FirehoseConfig {
+                    relay: fh_config.relay.clone(),
+                    cursor: fh_config.cursor,
+                    channel_capacity: fh_config.channel_capacity,
+                };
+                atrg_firehose::spawn_firehose(&firehose_config, state.clone(), handler).await?;
+            } else {
+                tracing::warn!("firehose configured but no on_firehose_event handler registered");
+            }
+        }
+
         // 8b. Spawn cleanup task (if registered) --------------------------------
         if let Some(cleanup) = self.cleanup_fn {
             cleanup(state.db.clone());
@@ -312,6 +384,10 @@ mod tests {
                 url: "sqlite::memory:".into(),
             },
             jetstream: None,
+            firehose: None,
+            feed_generator: None,
+            labeler: None,
+            rate_limit: None,
         };
 
         AppState {

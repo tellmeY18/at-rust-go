@@ -29,6 +29,19 @@ base64 = "0.22"
 rand = { workspace = true }
 hex = { workspace = true }
 
+# Optional Phase 7-11 crate integrations
+# NOTE: Only atrg-firehose can be a direct dep here because it does NOT
+# depend on atrg-core (it defines its own config types to avoid cycles).
+# atrg-feed and atrg-label depend on atrg-core (via atrg-auth → atrg-core),
+# so they CANNOT be deps of atrg-core. Instead, their routes are mounted
+# via the generic `.mount(router)` or `.with_feed_generator(router)` /
+# `.with_labeler(router)` convenience methods that accept Router<AppState>.
+atrg-firehose = { workspace = true, optional = true }
+
+[features]
+default = ["firehose"]
+firehose = ["dep:atrg-firehose"]
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }

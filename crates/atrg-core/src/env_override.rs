@@ -98,6 +98,48 @@ pub fn apply_env_overrides(config: &mut Config) {
         tracing::debug!(key = "ATRG_DATABASE__URL", "applying env override");
         config.database.url = val;
     }
+
+    // -- [firehose] -----------------------------------------------------
+    if let Ok(val) = std::env::var("ATRG_FIREHOSE__RELAY") {
+        if let Some(ref mut fh) = config.firehose {
+            tracing::debug!(key = "ATRG_FIREHOSE__RELAY", "applying env override");
+            fh.relay = val;
+        }
+    }
+
+    // -- [feed_generator] -----------------------------------------------
+    if let Ok(val) = std::env::var("ATRG_FEED_GENERATOR__DID") {
+        if let Some(ref mut fg) = config.feed_generator {
+            tracing::debug!(key = "ATRG_FEED_GENERATOR__DID", "applying env override");
+            fg.did = val;
+        }
+    }
+
+    // -- [labeler] ------------------------------------------------------
+    if let Ok(val) = std::env::var("ATRG_LABELER__DID") {
+        if let Some(ref mut lb) = config.labeler {
+            tracing::debug!(key = "ATRG_LABELER__DID", "applying env override");
+            lb.did = val;
+        }
+    }
+    if let Ok(val) = std::env::var("ATRG_LABELER__SIGNING_KEY_PATH") {
+        if let Some(ref mut lb) = config.labeler {
+            tracing::debug!(
+                key = "ATRG_LABELER__SIGNING_KEY_PATH",
+                "applying env override"
+            );
+            lb.signing_key_path = Some(val);
+        }
+    }
+    if let Ok(val) = std::env::var("ATRG_LABELER__SIGNING_KEY_BASE64") {
+        if let Some(ref mut lb) = config.labeler {
+            tracing::debug!(
+                key = "ATRG_LABELER__SIGNING_KEY_BASE64",
+                "applying env override"
+            );
+            lb.signing_key_base64 = Some(val);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +171,10 @@ mod tests {
                 url: "sqlite://atrg.db".into(),
             },
             jetstream: None,
+            firehose: None,
+            feed_generator: None,
+            labeler: None,
+            rate_limit: None,
         }
     }
 

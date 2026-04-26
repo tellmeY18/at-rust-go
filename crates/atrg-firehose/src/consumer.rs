@@ -532,4 +532,536 @@ mod tests {
         assert_eq!(cbor_map_get_str(&map, "missing"), None);
         assert_eq!(cbor_map_get_int(&map, "missing"), None);
     }
+
+    // -----------------------------------------------------------------------
+    // Helpers for constructing CBOR frames
+    // -----------------------------------------------------------------------
+
+    fn encode_frame(header: &ciborium::Value, body: &ciborium::Value) -> Vec<u8> {
+        let mut buf = Vec::new();
+        ciborium::into_writer(header, &mut buf).unwrap();
+        ciborium::into_writer(body, &mut buf).unwrap();
+        buf
+    }
+
+    fn cbor_map(entries: Vec<(&str, ciborium::Value)>) -> ciborium::Value {
+        ciborium::Value::Map(
+            entries
+                .into_iter()
+                .map(|(k, v)| (ciborium::Value::Text(k.to_string()), v))
+                .collect(),
+        )
+    }
+
+    fn cbor_map_pairs(
+        entries: Vec<(&str, ciborium::Value)>,
+    ) -> Vec<(ciborium::Value, ciborium::Value)> {
+        entries
+            .into_iter()
+            .map(|(k, v)| (ciborium::Value::Text(k.to_string()), v))
+            .collect()
+    }
+
+    // -----------------------------------------------------------------------
+    // decode_frame tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn decode_frame_commit() {
+        let header = cbor_map(vec![
+            ("op", ciborium::Value::Integer(1.into())),
+            ("t", ciborium::Value::Text("#commit".into())),
+        ]);
+        let body = cbor_map(vec![
+            ("seq", ciborium::Value::Integer(42.into())),
+            ("repo", ciborium::Value::Text("did:plc:abc".into())),
+            ("rev", ciborium::Value::Text("rev1".into())),
+            ("time", ciborium::Value::Text("2024-01-01".into())),
+            ("ops", ciborium::Value::Array(vec![])),
+            ("blocks", ciborium::Value::Bytes(vec![])),
+        ]);
+        let data = encode_frame(&header, &body);
+        let result = decode_frame(&data).unwrap().unwrap();
+        match result {
+            FirehoseEvent::Commit(c) => {
+                assert_eq!(c.seq, 42);
+                assert_eq!(c.repo, "did:plc:abc");
+                assert_eq!(c.rev, "rev1");
+                assert_eq!(c.time, "2024-01-01");
+                assert!(c.ops.is_empty());
+            }
+            other => panic!("expected Commit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_frame_handle() {
+        let header = cbor_map(vec![
+            ("op", ciborium::Value::Integer(1.into())),
+            ("t", ciborium::Value::Text("#handle".into())),
+        ]);
+        let body = cbor_map(vec![
+            ("seq", ciborium::Value::Integer(1.into())),
+            ("did", ciborium::Value::Text("did:plc:abc".into())),
+            ("handle", ciborium::Value::Text("alice.bsky.social".into())),
+        ]);
+        let data = encode_frame(&header, &body);
+        let result = decode_frame(&data).unwrap().unwrap();
+        match result {
+            FirehoseEvent::Handle { seq, did, handle } => {
+                assert_eq!(seq, 1);
+                assert_eq!(did, "did:plc:abc");
+                assert_eq!(handle, "alice.bsky.social");
+            }
+            other => panic!("expected Handle, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_frame_identity() {
+        let header = cbor_map(vec![
+            ("op", ciborium::Value::Integer(1.into())),
+            ("t", ciborium::Value::Text("#identity".into())),
+        ]);
+        let body = cbor_map(vec![
+            ("seq", ciborium::Value::Integer(2.into())),
+            ("did", ciborium::Value::Text("did:plc:abc".into())),
+        ]);
+        let data = encode_frame(&header, &body);
+        let result = decode_frame(&data).unwrap().unwrap();
+        match result {
+            FirehoseEvent::Identity { seq, did } => {
+                assert_eq!(seq, 2);
+                assert_eq!(did, "did:plc:abc");
+            }
+            other => panic!("expected Identity, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_frame_tombstone() {
+        let header = cbor_map(vec![
+            ("op", ciborium::Value::Integer(1.into())),
+            ("t", ciborium::Value::Text("#tombstone".into())),
+        ]);
+        let body = cbor_map(vec![
+            ("seq", ciborium::Value::Integer(3.into())),
+            ("did", ciborium::Value::Text("did:plc:abc".into())),
+        ]);
+        let data = encode_frame(&header, &body);
+        let result = decode_frame(&data).unwrap().unwrap();
+        match result {
+            FirehoseEvent::Tombstone { seq, did } => {
+                assert_eq!(seq, 3);
+                assert_eq!(did, "did:plc:abc");
+            }
+            other => panic!("expected Tombstone, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_frame_info() {
+        let header = cbor_map(vec![
+            ("op", ciborium::Value::Integer(1.into())),
+            ("t", ciborium::Value::Text("#info".into())),
+        ]);
+        let body = cbor_map(vec![
+            ("name", ciborium::Value::Text("OutdatedCursor".into())),
+            ("message", ciborium::Value::Text("you are behind".into())),
+        ]);
+        let data = encode_frame(&header, &body);
+        let result = decode_frame(&data).unwrap().unwrap();
+        match result {
+            FirehoseEvent::Info { name, message } => {
+                assert_eq!(name, "OutdatedCursor");
+                assert_eq!(message, Some("you are behind".to_string()));
+            }
+            other => panic!("expected Info, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_frame_error_op_minus_one() {
+        let header = cbor_map(vec![("op", ciborium::Value::Integer((-1).into()))]);
+        let body = cbor_map(vec![
+            ("error", ciborium::Value::Text("FutureCursor".into())),
+            ("message", ciborium::Value::Text("bad cursor".into())),
+        ]);
+        let data = encode_frame(&header, &body);
+        let result = decode_frame(&data).unwrap().unwrap();
+        match result {
+            FirehoseEvent::Info { name, message } => {
+                assert_eq!(name, "FutureCursor");
+                assert_eq!(message, Some("bad cursor".to_string()));
+            }
+            other => panic!("expected Info from error frame, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_frame_unknown_type_returns_none() {
+        let header = cbor_map(vec![
+            ("op", ciborium::Value::Integer(1.into())),
+            ("t", ciborium::Value::Text("#unknown".into())),
+        ]);
+        let body = cbor_map(vec![]);
+        let data = encode_frame(&header, &body);
+        assert!(decode_frame(&data).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_frame_unknown_op_returns_none() {
+        let header = cbor_map(vec![
+            ("op", ciborium::Value::Integer(99.into())),
+            ("t", ciborium::Value::Text("#commit".into())),
+        ]);
+        // Body isn't read for unknown op, but we need valid CBOR after header
+        // Actually for op != 1 and op != -1, we return Ok(None) before reading body.
+        let mut data = Vec::new();
+        ciborium::into_writer(&header, &mut data).unwrap();
+        assert!(decode_frame(&data).unwrap().is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // decode_commit tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn decode_commit_with_ops() {
+        let op_create = cbor_map(vec![
+            ("action", ciborium::Value::Text("create".into())),
+            (
+                "path",
+                ciborium::Value::Text("app.bsky.feed.post/abc".into()),
+            ),
+        ]);
+        let op_update = cbor_map(vec![
+            ("action", ciborium::Value::Text("update".into())),
+            (
+                "path",
+                ciborium::Value::Text("app.bsky.feed.post/def".into()),
+            ),
+        ]);
+        let op_delete = cbor_map(vec![
+            ("action", ciborium::Value::Text("delete".into())),
+            (
+                "path",
+                ciborium::Value::Text("app.bsky.feed.post/ghi".into()),
+            ),
+        ]);
+
+        let body = cbor_map_pairs(vec![
+            ("seq", ciborium::Value::Integer(10.into())),
+            ("repo", ciborium::Value::Text("did:plc:xyz".into())),
+            ("rev", ciborium::Value::Text("r2".into())),
+            ("time", ciborium::Value::Text("2024-06-01".into())),
+            (
+                "ops",
+                ciborium::Value::Array(vec![op_create, op_update, op_delete]),
+            ),
+            ("blocks", ciborium::Value::Bytes(vec![])),
+        ]);
+
+        let result = decode_commit(&body).unwrap();
+        match result {
+            FirehoseEvent::Commit(c) => {
+                assert_eq!(c.seq, 10);
+                assert_eq!(c.repo, "did:plc:xyz");
+                assert_eq!(c.ops.len(), 3);
+                assert_eq!(c.ops[0].action, OpAction::Create);
+                assert_eq!(c.ops[0].path, "app.bsky.feed.post/abc");
+                assert_eq!(c.ops[1].action, OpAction::Update);
+                assert_eq!(c.ops[2].action, OpAction::Delete);
+            }
+            other => panic!("expected Commit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_commit_empty_ops() {
+        let body = cbor_map_pairs(vec![
+            ("seq", ciborium::Value::Integer(5.into())),
+            ("repo", ciborium::Value::Text("did:plc:abc".into())),
+            ("rev", ciborium::Value::Text("r1".into())),
+            ("time", ciborium::Value::Text("2024-01-01".into())),
+            ("ops", ciborium::Value::Array(vec![])),
+            ("blocks", ciborium::Value::Bytes(vec![])),
+        ]);
+        let result = decode_commit(&body).unwrap();
+        match result {
+            FirehoseEvent::Commit(c) => assert!(c.ops.is_empty()),
+            other => panic!("expected Commit, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_commit_missing_seq_errors() {
+        let body = cbor_map_pairs(vec![("repo", ciborium::Value::Text("did:plc:abc".into()))]);
+        assert!(decode_commit(&body).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // decode_handle / decode_identity / decode_tombstone / decode_info tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn decode_handle_success() {
+        let body = cbor_map_pairs(vec![
+            ("seq", ciborium::Value::Integer(7.into())),
+            ("did", ciborium::Value::Text("did:plc:h".into())),
+            ("handle", ciborium::Value::Text("bob.test".into())),
+        ]);
+        match decode_handle(&body).unwrap() {
+            FirehoseEvent::Handle { seq, did, handle } => {
+                assert_eq!(seq, 7);
+                assert_eq!(did, "did:plc:h");
+                assert_eq!(handle, "bob.test");
+            }
+            other => panic!("expected Handle, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_handle_missing_seq_errors() {
+        let body = cbor_map_pairs(vec![("did", ciborium::Value::Text("did:plc:h".into()))]);
+        assert!(decode_handle(&body).is_err());
+    }
+
+    #[test]
+    fn decode_identity_success() {
+        let body = cbor_map_pairs(vec![
+            ("seq", ciborium::Value::Integer(8.into())),
+            ("did", ciborium::Value::Text("did:plc:i".into())),
+        ]);
+        match decode_identity(&body).unwrap() {
+            FirehoseEvent::Identity { seq, did } => {
+                assert_eq!(seq, 8);
+                assert_eq!(did, "did:plc:i");
+            }
+            other => panic!("expected Identity, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_identity_missing_seq_errors() {
+        let body = cbor_map_pairs(vec![("did", ciborium::Value::Text("did:plc:i".into()))]);
+        assert!(decode_identity(&body).is_err());
+    }
+
+    #[test]
+    fn decode_tombstone_success() {
+        let body = cbor_map_pairs(vec![
+            ("seq", ciborium::Value::Integer(9.into())),
+            ("did", ciborium::Value::Text("did:plc:t".into())),
+        ]);
+        match decode_tombstone(&body).unwrap() {
+            FirehoseEvent::Tombstone { seq, did } => {
+                assert_eq!(seq, 9);
+                assert_eq!(did, "did:plc:t");
+            }
+            other => panic!("expected Tombstone, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_tombstone_missing_seq_errors() {
+        let body = cbor_map_pairs(vec![("did", ciborium::Value::Text("did:plc:t".into()))]);
+        assert!(decode_tombstone(&body).is_err());
+    }
+
+    #[test]
+    fn decode_info_success() {
+        let body = cbor_map_pairs(vec![
+            ("name", ciborium::Value::Text("OutdatedCursor".into())),
+            ("message", ciborium::Value::Text("old cursor".into())),
+        ]);
+        match decode_info(&body).unwrap() {
+            FirehoseEvent::Info { name, message } => {
+                assert_eq!(name, "OutdatedCursor");
+                assert_eq!(message, Some("old cursor".to_string()));
+            }
+            other => panic!("expected Info, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn decode_info_no_message() {
+        let body = cbor_map_pairs(vec![("name", ciborium::Value::Text("SomeInfo".into()))]);
+        match decode_info(&body).unwrap() {
+            FirehoseEvent::Info { name, message } => {
+                assert_eq!(name, "SomeInfo");
+                assert_eq!(message, None);
+            }
+            other => panic!("expected Info, got {:?}", other),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // extract_cid_string tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn extract_cid_tag42_with_prefix() {
+        let map = cbor_map_pairs(vec![(
+            "cid",
+            ciborium::Value::Tag(42, Box::new(ciborium::Value::Bytes(vec![0x00, 0xde, 0xad]))),
+        )]);
+        assert_eq!(extract_cid_string(&map), Some("dead".to_string()));
+    }
+
+    #[test]
+    fn extract_cid_tag42_no_prefix() {
+        let map = cbor_map_pairs(vec![(
+            "cid",
+            ciborium::Value::Tag(42, Box::new(ciborium::Value::Bytes(vec![0xab, 0xcd]))),
+        )]);
+        assert_eq!(extract_cid_string(&map), Some("abcd".to_string()));
+    }
+
+    #[test]
+    fn extract_cid_raw_bytes() {
+        let map = cbor_map_pairs(vec![(
+            "cid",
+            ciborium::Value::Bytes(vec![0x00, 0x01, 0x02]),
+        )]);
+        assert_eq!(extract_cid_string(&map), Some("0102".to_string()));
+    }
+
+    #[test]
+    fn extract_cid_link_map() {
+        let link_map = ciborium::Value::Map(vec![(
+            ciborium::Value::Text("$link".into()),
+            ciborium::Value::Text("bafyabc".into()),
+        )]);
+        let map = cbor_map_pairs(vec![("cid", link_map)]);
+        assert_eq!(extract_cid_string(&map), Some("bafyabc".to_string()));
+    }
+
+    #[test]
+    fn extract_cid_other_type_returns_none() {
+        let map = cbor_map_pairs(vec![("cid", ciborium::Value::Integer(123.into()))]);
+        assert_eq!(extract_cid_string(&map), None);
+    }
+
+    #[test]
+    fn extract_cid_missing_key_returns_none() {
+        let map = cbor_map_pairs(vec![("other", ciborium::Value::Text("x".into()))]);
+        assert_eq!(extract_cid_string(&map), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // cbor_map_get_bytes / cbor_map_get_array tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn cbor_map_get_bytes_present() {
+        let map = cbor_map_pairs(vec![("data", ciborium::Value::Bytes(vec![1, 2, 3]))]);
+        assert_eq!(cbor_map_get_bytes(&map, "data"), Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn cbor_map_get_bytes_missing() {
+        let map = cbor_map_pairs(vec![("other", ciborium::Value::Integer(1.into()))]);
+        assert_eq!(cbor_map_get_bytes(&map, "data"), None);
+    }
+
+    #[test]
+    fn cbor_map_get_array_present() {
+        let map = cbor_map_pairs(vec![(
+            "items",
+            ciborium::Value::Array(vec![
+                ciborium::Value::Integer(1.into()),
+                ciborium::Value::Integer(2.into()),
+            ]),
+        )]);
+        let arr = cbor_map_get_array(&map, "items").unwrap();
+        assert_eq!(arr.len(), 2);
+    }
+
+    #[test]
+    fn cbor_map_get_array_missing() {
+        let map = cbor_map_pairs(vec![("other", ciborium::Value::Integer(1.into()))]);
+        assert_eq!(cbor_map_get_array(&map, "items"), None);
+    }
+
+    // -----------------------------------------------------------------------
+    // handle_binary_frame tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn handle_binary_frame_sends_event() {
+        let header = cbor_map(vec![
+            ("op", ciborium::Value::Integer(1.into())),
+            ("t", ciborium::Value::Text("#identity".into())),
+        ]);
+        let body = cbor_map(vec![
+            ("seq", ciborium::Value::Integer(77.into())),
+            ("did", ciborium::Value::Text("did:plc:test".into())),
+        ]);
+        let data = encode_frame(&header, &body);
+
+        let (tx, mut rx) = mpsc::channel(16);
+        let metrics = MetricsCounter::new();
+
+        handle_binary_frame(&data, &tx, &metrics);
+
+        let event = rx.try_recv().unwrap();
+        match event {
+            FirehoseEvent::Identity { seq, did } => {
+                assert_eq!(seq, 77);
+                assert_eq!(did, "did:plc:test");
+            }
+            other => panic!("expected Identity, got {:?}", other),
+        }
+        assert_eq!(metrics.events_received.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.events_dropped.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn handle_binary_frame_drops_when_channel_full() {
+        let header = cbor_map(vec![
+            ("op", ciborium::Value::Integer(1.into())),
+            ("t", ciborium::Value::Text("#identity".into())),
+        ]);
+        let body = cbor_map(vec![
+            ("seq", ciborium::Value::Integer(1.into())),
+            ("did", ciborium::Value::Text("did:plc:x".into())),
+        ]);
+        let data = encode_frame(&header, &body);
+
+        // Channel with capacity 1, pre-fill it.
+        let (tx, _rx) = mpsc::channel(1);
+        let metrics = MetricsCounter::new();
+
+        // Fill the channel.
+        handle_binary_frame(&data, &tx, &metrics);
+        // Second send should drop.
+        handle_binary_frame(&data, &tx, &metrics);
+
+        assert_eq!(metrics.events_received.load(Ordering::Relaxed), 2);
+        assert_eq!(metrics.events_dropped.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn handle_binary_frame_bad_data_increments_errors() {
+        let (tx, _rx) = mpsc::channel(16);
+        let metrics = MetricsCounter::new();
+
+        handle_binary_frame(&[0xff, 0xff], &tx, &metrics);
+
+        assert_eq!(metrics.events_received.load(Ordering::Relaxed), 1);
+        assert_eq!(metrics.errors.load(Ordering::Relaxed), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // update_last_event_timestamp tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn update_last_event_timestamp_sets_nonzero() {
+        let metrics = MetricsCounter::new();
+        assert_eq!(metrics.last_event_at.load(Ordering::Relaxed), 0);
+        update_last_event_timestamp(&metrics);
+        assert_ne!(metrics.last_event_at.load(Ordering::Relaxed), 0);
+    }
 }

@@ -205,18 +205,222 @@ mod tests {
         );
     }
 
-    // HTTP integration tests for `upload_blob` and `upload_blob_from_url`
-    // require a mock PDS server. Add wiremock to [dev-dependencies] to enable:
-    //
-    // #[tokio::test]
-    // async fn upload_blob_success() { ... }
-    //
-    // #[tokio::test]
-    // async fn upload_blob_pds_error() { ... }
-    //
-    // #[tokio::test]
-    // async fn upload_blob_from_url_success() { ... }
-    //
-    // #[tokio::test]
-    // async fn upload_blob_from_url_fetch_failure() { ... }
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // ---- upload_blob ----
+
+    #[tokio::test]
+    async fn upload_blob_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.uploadBlob"))
+            .and(header("Authorization", "Bearer tok123"))
+            .and(header("Content-Type", "image/png"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "blob": {
+                    "ref": { "$link": "bafkreiblob" },
+                    "mimeType": "image/png",
+                    "size": 64
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let result = upload_blob(&http, &server.uri(), "tok123", vec![0u8; 64], "image/png").await;
+
+        let blob_ref = result.unwrap();
+        assert_eq!(blob_ref.reference.link, "bafkreiblob");
+        assert_eq!(blob_ref.mime_type, "image/png");
+        assert_eq!(blob_ref.size, 64);
+        assert_eq!(blob_ref.blob_type, "blob");
+    }
+
+    #[tokio::test]
+    async fn upload_blob_pds_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.uploadBlob"))
+            .respond_with(ResponseTemplate::new(413).set_body_string("payload too large"))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let result = upload_blob(&http, &server.uri(), "tok", vec![0u8; 10], "image/png").await;
+
+        match result {
+            Err(RepoError::Pds(msg)) => {
+                assert!(
+                    msg.contains("413"),
+                    "error should contain status code: {msg}"
+                );
+                assert!(msg.contains("payload too large"));
+            }
+            other => panic!("expected Pds error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_blob_missing_blob_field() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.uploadBlob"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let result = upload_blob(&http, &server.uri(), "tok", vec![1], "image/png").await;
+
+        match result {
+            Err(RepoError::Pds(msg)) => assert!(msg.contains("missing 'blob'")),
+            other => panic!("expected Pds error for missing blob field, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_blob_missing_ref_link() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.uploadBlob"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "blob": { "mimeType": "image/png", "size": 10 }
+            })))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let result = upload_blob(&http, &server.uri(), "tok", vec![1], "image/png").await;
+
+        match result {
+            Err(RepoError::Pds(msg)) => assert!(msg.contains("ref.$link")),
+            other => panic!("expected Pds error for missing ref.$link, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_blob_defaults_mime_and_size() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.uploadBlob"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "blob": {
+                    "ref": { "$link": "bafkrei999" }
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let blob_ref = upload_blob(
+            &http,
+            &server.uri(),
+            "tok",
+            vec![1],
+            "application/octet-stream",
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(blob_ref.mime_type, "application/octet-stream");
+        assert_eq!(blob_ref.size, 0);
+    }
+
+    // ---- upload_blob_from_url ----
+
+    #[tokio::test]
+    async fn upload_blob_from_url_success() {
+        let server = MockServer::start().await;
+
+        // Mock the image fetch endpoint
+        Mock::given(method("GET"))
+            .and(path("/images/photo.jpg"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("Content-Type", "image/jpeg")
+                    .set_body_bytes(vec![0xFFu8, 0xD8, 0xFF, 0xE0]),
+            )
+            .mount(&server)
+            .await;
+
+        // Mock the upload endpoint
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.uploadBlob"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "blob": {
+                    "ref": { "$link": "bafkreiimg" },
+                    "mimeType": "image/jpeg",
+                    "size": 4
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let image_url = format!("{}/images/photo.jpg", server.uri());
+        let blob_ref = upload_blob_from_url(&http, &server.uri(), "tok", &image_url)
+            .await
+            .unwrap();
+
+        assert_eq!(blob_ref.reference.link, "bafkreiimg");
+        assert_eq!(blob_ref.mime_type, "image/jpeg");
+        assert_eq!(blob_ref.size, 4);
+    }
+
+    #[tokio::test]
+    async fn upload_blob_from_url_fetch_failure() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/images/gone.jpg"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let image_url = format!("{}/images/gone.jpg", server.uri());
+        let result = upload_blob_from_url(&http, &server.uri(), "tok", &image_url).await;
+
+        match result {
+            Err(RepoError::Pds(msg)) => {
+                assert!(msg.contains("failed to fetch image"));
+                assert!(msg.contains("404"));
+            }
+            other => panic!("expected Pds error, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn upload_blob_from_url_defaults_mime_type() {
+        let server = MockServer::start().await;
+
+        // Return response without Content-Type header
+        Mock::given(method("GET"))
+            .and(path("/data/blob"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![0u8; 8]))
+            .mount(&server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.uploadBlob"))
+            .and(header("Content-Type", "application/octet-stream"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "blob": {
+                    "ref": { "$link": "bafkreidefault" },
+                    "mimeType": "application/octet-stream",
+                    "size": 8
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let http = reqwest::Client::new();
+        let url = format!("{}/data/blob", server.uri());
+        let blob_ref = upload_blob_from_url(&http, &server.uri(), "tok", &url)
+            .await
+            .unwrap();
+
+        assert_eq!(blob_ref.mime_type, "application/octet-stream");
+    }
 }

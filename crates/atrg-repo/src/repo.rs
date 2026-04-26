@@ -3,6 +3,7 @@
 //! Wraps `com.atproto.repo.*` XRPC calls with typed helpers.
 
 use serde::de::DeserializeOwned;
+#[allow(unused_imports)]
 use tracing::debug;
 
 use crate::at_uri::AtUri;
@@ -407,11 +408,324 @@ mod tests {
         assert_ne!(a.as_str(), b.as_str());
     }
 
-    // HTTP integration tests for get_record, list_records, create_record,
-    // put_record, delete_record, and upload_blob require a mock PDS server.
-    // These methods are thin XRPC wrappers with no pre-validation logic
-    // that can be unit-tested independently of the network call.
-    //
-    // To test them, add `mockito` to [dev-dependencies] and stand up a
-    // mock PDS that responds to `/xrpc/com.atproto.repo.*` endpoints.
+    use wiremock::matchers::{header, method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn mock_repo(server: &MockServer) -> Repo {
+        let http = reqwest::Client::new();
+        Repo::new(&http, &server.uri(), "test_token", "did:plc:testuser")
+    }
+
+    // ---- get_record ----
+
+    #[tokio::test]
+    async fn get_record_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/xrpc/com.atproto.repo.getRecord"))
+            .and(query_param("repo", "did:plc:testuser"))
+            .and(query_param("collection", "app.bsky.feed.post"))
+            .and(query_param("rkey", "3k2la"))
+            .and(header("Authorization", "Bearer test_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "uri": "at://did:plc:testuser/app.bsky.feed.post/3k2la",
+                "cid": "bafyabc",
+                "value": { "text": "hello world" }
+            })))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let uri = AtUri::parse("at://did:plc:testuser/app.bsky.feed.post/3k2la").unwrap();
+        let record: Record<serde_json::Value> = repo.get_record(&uri).await.unwrap();
+
+        assert_eq!(record.uri, "at://did:plc:testuser/app.bsky.feed.post/3k2la");
+        assert_eq!(record.cid, "bafyabc");
+        assert_eq!(record.value["text"], "hello world");
+    }
+
+    #[tokio::test]
+    async fn get_record_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/xrpc/com.atproto.repo.getRecord"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(serde_json::json!({
+                "error": "RecordNotFound",
+                "message": "not found"
+            })))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let uri = AtUri::parse("at://did:plc:testuser/app.bsky.feed.post/missing").unwrap();
+        let result: Result<Record<serde_json::Value>, _> = repo.get_record(&uri).await;
+
+        assert!(matches!(result, Err(RepoError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn get_record_pds_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/xrpc/com.atproto.repo.getRecord"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("internal"))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let uri = AtUri::parse("at://did:plc:testuser/app.bsky.feed.post/rk").unwrap();
+        let result: Result<Record<serde_json::Value>, _> = repo.get_record(&uri).await;
+
+        match result {
+            Err(RepoError::Pds(msg)) => assert!(msg.contains("500")),
+            other => panic!("expected Pds error, got {:?}", other),
+        }
+    }
+
+    // ---- list_records ----
+
+    #[tokio::test]
+    async fn list_records_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/xrpc/com.atproto.repo.listRecords"))
+            .and(query_param("repo", "did:plc:testuser"))
+            .and(query_param("collection", "app.bsky.feed.post"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "records": [
+                    { "uri": "at://did:plc:testuser/app.bsky.feed.post/1", "cid": "cid1", "value": { "text": "a" } },
+                    { "uri": "at://did:plc:testuser/app.bsky.feed.post/2", "cid": "cid2", "value": { "text": "b" } }
+                ],
+                "cursor": "next123"
+            })))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let page: Page<Record<serde_json::Value>> = repo
+            .list_records("app.bsky.feed.post", None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(page.records.len(), 2);
+        assert_eq!(page.records[0].value["text"], "a");
+        assert_eq!(page.cursor.as_deref(), Some("next123"));
+    }
+
+    #[tokio::test]
+    async fn list_records_with_cursor_and_limit() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/xrpc/com.atproto.repo.listRecords"))
+            .and(query_param("cursor", "abc"))
+            .and(query_param("limit", "5"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "records": [],
+                "cursor": null
+            })))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let page: Page<Record<serde_json::Value>> = repo
+            .list_records("app.bsky.feed.post", Some("abc"), Some(5))
+            .await
+            .unwrap();
+
+        assert!(page.records.is_empty());
+        assert!(page.cursor.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_records_pds_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/xrpc/com.atproto.repo.listRecords"))
+            .respond_with(ResponseTemplate::new(403).set_body_string("forbidden"))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let result: Result<Page<Record<serde_json::Value>>, _> =
+            repo.list_records("col", None, None).await;
+
+        assert!(matches!(result, Err(RepoError::Pds(_))));
+    }
+
+    // ---- create_record ----
+
+    #[tokio::test]
+    async fn create_record_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.createRecord"))
+            .and(header("Authorization", "Bearer test_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "uri": "at://did:plc:testuser/app.bsky.feed.post/newrkey",
+                "cid": "bafynew"
+            })))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let record = serde_json::json!({ "text": "new post" });
+        let strong = repo
+            .create_record("app.bsky.feed.post", &record)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            strong.uri,
+            "at://did:plc:testuser/app.bsky.feed.post/newrkey"
+        );
+        assert_eq!(strong.cid, "bafynew");
+    }
+
+    #[tokio::test]
+    async fn create_record_pds_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.createRecord"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("bad request"))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let result = repo.create_record("col", &serde_json::json!({})).await;
+
+        match result {
+            Err(RepoError::Pds(msg)) => assert!(msg.contains("400")),
+            other => panic!("expected Pds error, got {:?}", other),
+        }
+    }
+
+    // ---- put_record ----
+
+    #[tokio::test]
+    async fn put_record_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.putRecord"))
+            .and(header("Authorization", "Bearer test_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "uri": "at://did:plc:testuser/app.bsky.actor.profile/self",
+                "cid": "bafyput"
+            })))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let record = serde_json::json!({ "displayName": "Alice" });
+        let strong = repo
+            .put_record("app.bsky.actor.profile", "self", &record)
+            .await
+            .unwrap();
+
+        assert_eq!(strong.cid, "bafyput");
+    }
+
+    #[tokio::test]
+    async fn put_record_pds_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.putRecord"))
+            .respond_with(ResponseTemplate::new(502).set_body_string("bad gateway"))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let result = repo.put_record("col", "rk", &serde_json::json!({})).await;
+
+        assert!(matches!(result, Err(RepoError::Pds(_))));
+    }
+
+    // ---- delete_record ----
+
+    #[tokio::test]
+    async fn delete_record_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.deleteRecord"))
+            .and(header("Authorization", "Bearer test_token"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let uri = AtUri::parse("at://did:plc:testuser/app.bsky.feed.post/3k2la").unwrap();
+        repo.delete_record(&uri).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn delete_record_not_found() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.deleteRecord"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let uri = AtUri::parse("at://did:plc:testuser/app.bsky.feed.post/gone").unwrap();
+        let result = repo.delete_record(&uri).await;
+
+        assert!(matches!(result, Err(RepoError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn delete_record_pds_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.deleteRecord"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("error"))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let uri = AtUri::parse("at://did:plc:testuser/app.test/rk").unwrap();
+        let result = repo.delete_record(&uri).await;
+
+        assert!(matches!(result, Err(RepoError::Pds(_))));
+    }
+
+    // ---- upload_blob (via Repo) ----
+
+    #[tokio::test]
+    async fn upload_blob_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.uploadBlob"))
+            .and(header("Authorization", "Bearer test_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "blob": {
+                    "ref": { "$link": "bafyblob123" },
+                    "mimeType": "image/png",
+                    "size": 2048
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let blob_ref = repo.upload_blob(vec![0u8; 100], "image/png").await.unwrap();
+
+        assert_eq!(blob_ref.reference.link, "bafyblob123");
+        assert_eq!(blob_ref.mime_type, "image/png");
+        assert_eq!(blob_ref.size, 2048);
+    }
+
+    #[tokio::test]
+    async fn upload_blob_pds_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/xrpc/com.atproto.repo.uploadBlob"))
+            .respond_with(ResponseTemplate::new(413).set_body_string("too large"))
+            .mount(&server)
+            .await;
+
+        let repo = mock_repo(&server).await;
+        let result = repo.upload_blob(vec![0u8; 100], "image/png").await;
+
+        assert!(matches!(result, Err(RepoError::Pds(_))));
+    }
 }

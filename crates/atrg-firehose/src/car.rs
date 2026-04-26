@@ -352,4 +352,213 @@ mod tests {
             }
         }
     }
+
+    // ── read_cid tests ──────────────────────────────────────────────
+
+    #[test]
+    fn read_cid_v0() {
+        // CIDv0: starts with 0x12 0x20, followed by 32 bytes of digest. Total 34 bytes.
+        let mut data = vec![0x12u8, 0x20];
+        data.extend_from_slice(&[0xAA; 32]);
+        let mut cursor: &[u8] = &data;
+        let cid = read_cid(&mut cursor).unwrap();
+        // Should consume all 34 bytes
+        assert!(cursor.is_empty());
+        // Hex should start with "1220"
+        assert!(cid.starts_with("1220"));
+        assert_eq!(cid.len(), 68); // 34 bytes * 2 hex chars
+    }
+
+    #[test]
+    fn read_cid_v1() {
+        let mut data = Vec::new();
+        write_varint_to(&mut data, 1); // version
+        write_varint_to(&mut data, 0x71); // codec (dag-cbor)
+        write_varint_to(&mut data, 0x12); // hash fn (sha2-256)
+        write_varint_to(&mut data, 32); // digest size
+        data.extend_from_slice(&[0xBB; 32]); // digest
+        let expected_len = data.len();
+        let mut cursor: &[u8] = &data;
+        let cid = read_cid(&mut cursor).unwrap();
+        assert!(cursor.is_empty());
+        assert_eq!(cid.len(), expected_len * 2); // hex encoding doubles length
+    }
+
+    #[test]
+    fn read_cid_empty_fails() {
+        let data: &[u8] = &[];
+        let mut cursor = data;
+        assert!(read_cid(&mut cursor).is_err());
+    }
+
+    #[test]
+    fn read_cid_truncated_v0_fails() {
+        // Only 10 bytes when CIDv0 needs 34
+        let mut data = vec![0x12u8, 0x20];
+        data.extend_from_slice(&[0xAA; 8]); // only 10 total, need 34
+        let mut cursor: &[u8] = &data;
+        assert!(read_cid(&mut cursor).is_err());
+    }
+
+    // ── decode_car with actual blocks ───────────────────────────────
+
+    #[test]
+    fn decode_car_with_one_block() {
+        // Build header
+        let mut header_cbor = Vec::new();
+        ciborium::into_writer(
+            &ciborium::Value::Map(vec![
+                (
+                    ciborium::Value::Text("version".into()),
+                    ciborium::Value::Integer(1.into()),
+                ),
+                (
+                    ciborium::Value::Text("roots".into()),
+                    ciborium::Value::Array(vec![]),
+                ),
+            ]),
+            &mut header_cbor,
+        )
+        .unwrap();
+
+        // Build a CIDv1
+        let mut cid_bytes = Vec::new();
+        write_varint_to(&mut cid_bytes, 1); // version
+        write_varint_to(&mut cid_bytes, 0x71); // codec
+        write_varint_to(&mut cid_bytes, 0x12); // hash fn
+        write_varint_to(&mut cid_bytes, 32); // digest size
+        cid_bytes.extend_from_slice(&[0xCC; 32]); // digest
+
+        // Build CBOR block data: {"hello": "world"}
+        let mut block_data = Vec::new();
+        ciborium::into_writer(
+            &ciborium::Value::Map(vec![(
+                ciborium::Value::Text("hello".into()),
+                ciborium::Value::Text("world".into()),
+            )]),
+            &mut block_data,
+        )
+        .unwrap();
+
+        // Block section = CID bytes + block data
+        let mut block_section = Vec::new();
+        block_section.extend_from_slice(&cid_bytes);
+        block_section.extend_from_slice(&block_data);
+
+        // Assemble full CAR
+        let mut car_data = Vec::new();
+        write_varint_to(&mut car_data, header_cbor.len() as u64);
+        car_data.extend_from_slice(&header_cbor);
+        write_varint_to(&mut car_data, block_section.len() as u64);
+        car_data.extend_from_slice(&block_section);
+
+        let decoded = decode_car(&car_data).unwrap();
+        assert_eq!(decoded.blocks.len(), 1);
+        let (_cid, value) = decoded.blocks.iter().next().unwrap();
+        assert_eq!(value["hello"], "world");
+    }
+
+    // ── cbor_to_json missing branches ───────────────────────────────
+
+    #[test]
+    fn cbor_to_json_bool() {
+        assert_eq!(
+            cbor_to_json(&ciborium::Value::Bool(true)),
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            cbor_to_json(&ciborium::Value::Bool(false)),
+            serde_json::json!(false)
+        );
+    }
+
+    #[test]
+    fn cbor_to_json_integer() {
+        assert_eq!(
+            cbor_to_json(&ciborium::Value::Integer(42.into())),
+            serde_json::json!(42)
+        );
+        assert_eq!(
+            cbor_to_json(&ciborium::Value::Integer((-1).into())),
+            serde_json::json!(-1)
+        );
+    }
+
+    #[test]
+    fn cbor_to_json_float() {
+        let val = cbor_to_json(&ciborium::Value::Float(1.234));
+        assert!(val.is_number());
+    }
+
+    #[test]
+    fn cbor_to_json_bytes() {
+        let val = cbor_to_json(&ciborium::Value::Bytes(vec![0xDE, 0xAD]));
+        assert_eq!(val["$bytes"], "dead");
+    }
+
+    #[test]
+    fn cbor_to_json_array() {
+        let val = cbor_to_json(&ciborium::Value::Array(vec![
+            ciborium::Value::Integer(1.into()),
+            ciborium::Value::Text("two".into()),
+        ]));
+        assert_eq!(val, serde_json::json!([1, "two"]));
+    }
+
+    #[test]
+    fn cbor_to_json_generic_tag() {
+        // Non-42 tag should use $tag/$value fallback
+        let val = cbor_to_json(&ciborium::Value::Tag(
+            99,
+            Box::new(ciborium::Value::Text("inner".into())),
+        ));
+        assert_eq!(val["$tag"], 99);
+        assert_eq!(val["$value"], "inner");
+    }
+
+    #[test]
+    fn cbor_to_json_float_nan() {
+        // NaN can't be represented in JSON, should become null
+        let val = cbor_to_json(&ciborium::Value::Float(f64::NAN));
+        assert!(val.is_null());
+    }
+
+    // ── decode_car edge cases ───────────────────────────────────────
+
+    #[test]
+    fn decode_car_truncated_header_fails() {
+        // varint says header is 100 bytes but only 5 available
+        let mut data = Vec::new();
+        write_varint_to(&mut data, 100);
+        data.extend_from_slice(&[0; 5]);
+        assert!(decode_car(&data).is_err());
+    }
+
+    #[test]
+    fn decode_car_zero_length_block_skipped() {
+        // Header + a block with 0 length should be skipped gracefully
+        let mut header_cbor = Vec::new();
+        ciborium::into_writer(
+            &ciborium::Value::Map(vec![
+                (
+                    ciborium::Value::Text("version".into()),
+                    ciborium::Value::Integer(1.into()),
+                ),
+                (
+                    ciborium::Value::Text("roots".into()),
+                    ciborium::Value::Array(vec![]),
+                ),
+            ]),
+            &mut header_cbor,
+        )
+        .unwrap();
+
+        let mut data = Vec::new();
+        write_varint_to(&mut data, header_cbor.len() as u64);
+        data.extend_from_slice(&header_cbor);
+        write_varint_to(&mut data, 0); // zero-length block
+
+        let decoded = decode_car(&data).unwrap();
+        assert!(decoded.blocks.is_empty());
+    }
 }

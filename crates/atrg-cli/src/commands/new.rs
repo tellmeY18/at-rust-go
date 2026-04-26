@@ -30,6 +30,13 @@ serde_json = "1"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Uncomment to enable additional features:
+# atrg-repo = "0.1"        # Record CRUD, blob uploads, AT-URI helpers
+# atrg-xrpc = "0.1"        # XRPC route helpers
+# atrg-feed = "0.1"        # Feed generator framework
+# atrg-label = "0.1"       # Labeler framework
+# atrg-firehose = "0.1"    # Full relay firehose consumer
 "#;
 
 const TMPL_RUST_TOOLCHAIN: &str = r#"[toolchain]
@@ -56,6 +63,25 @@ url = "sqlite://atrg.db"
 # [jetstream]
 # host = "jetstream1.us-east.bsky.network"
 # collections = ["app.bsky.feed.post"]
+
+# Uncomment to enable relay firehose (full com.atproto.sync.subscribeRepos)
+# [firehose]
+# relay = "wss://bsky.network"
+
+# Uncomment to run as a feed generator
+# [feed_generator]
+# did = "did:web:feeds.example.com"
+
+# Uncomment to run as a labeler
+# [labeler]
+# did = "did:web:labels.example.com"
+# signing_key_path = "keys/labeler.pem"
+
+# Uncomment to enable rate limiting
+# [rate_limit]
+# requests_per_second = 10.0
+# burst = 50
+# enabled = true
 "#;
 
 const TMPL_MAIN_RS: &str = r#"use atrg_core::AtrgApp;

@@ -23,23 +23,24 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/tellmeY18/at-rust-go"
+homepage = "https://github.com/tellmeY18/at-rust-go"
 authors = ["tellmeY18"]
 rust-version = "1.80"
 
 [workspace.dependencies]
-# Internal crates
-atrg-core = { path = "crates/atrg-core" }
-atrg-auth = { path = "crates/atrg-auth" }
-atrg-stream = { path = "crates/atrg-stream" }
-atrg-db = { path = "crates/atrg-db" }
-atrg-xrpc = { path = "crates/atrg-xrpc" }
-atrg-identity = { path = "crates/atrg-identity" }
-atrg-codegen = { path = "crates/atrg-codegen" }
-atrg-testing = { path = "crates/atrg-testing" }
-atrg-repo = { path = "crates/atrg-repo" }
-atrg-firehose = { path = "crates/atrg-firehose" }
-atrg-feed = { path = "crates/atrg-feed" }
-atrg-label = { path = "crates/atrg-label" }
+# Internal crates — version is required for crates.io publishing
+atrg-core = { path = "crates/atrg-core", version = "0.1.0" }
+atrg-auth = { path = "crates/atrg-auth", version = "0.1.0" }
+atrg-stream = { path = "crates/atrg-stream", version = "0.1.0" }
+atrg-db = { path = "crates/atrg-db", version = "0.1.0" }
+atrg-xrpc = { path = "crates/atrg-xrpc", version = "0.1.0" }
+atrg-identity = { path = "crates/atrg-identity", version = "0.1.0" }
+atrg-codegen = { path = "crates/atrg-codegen", version = "0.1.0" }
+atrg-testing = { path = "crates/atrg-testing", version = "0.1.0" }
+atrg-repo = { path = "crates/atrg-repo", version = "0.1.0" }
+atrg-firehose = { path = "crates/atrg-firehose", version = "0.1.0" }
+atrg-feed = { path = "crates/atrg-feed", version = "0.1.0" }
+atrg-label = { path = "crates/atrg-label", version = "0.1.0" }
 
 # AT Protocol — DO NOT reimplement anything these provide
 atproto-identity = "0.14.2"

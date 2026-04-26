@@ -33,6 +33,10 @@ pub async fn test_state() -> AppState {
             url: "sqlite::memory:".into(),
         },
         jetstream: None,
+        firehose: None,
+        feed_generator: None,
+        labeler: None,
+        rate_limit: None,
     };
 
     AppState {
