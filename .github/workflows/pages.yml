@@ -26,7 +26,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build API docs
-        run: cargo doc --workspace --no-deps
+        run: cargo +nightly doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: "--enable-index-page -Zunstable-options"
 
