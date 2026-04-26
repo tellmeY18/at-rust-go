@@ -9,10 +9,13 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_LOG: info
+  # Reduce peak memory during compilation
+  CARGO_BUILD_JOBS: 2
 
 jobs:
-  e2e:
-    name: End-to-End Validation
+  # ─── Fast checks (no heavy compilation) ───────────────────────────
+  lint:
+    name: Lint & Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,33 +24,114 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
 
-      # 1. Full workspace builds
-      - name: Build workspace
-        run: cargo build --workspace
-
-      # 2. Formatting
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # 3. Clippy
       - name: Clippy (no warnings)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # 4. All tests pass
+  audit:
+    name: Audit & Static Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No unwrap() in production library crates
+        run: |
+          UNWRAPS=$(grep -rn "\.unwrap()" \
+            crates/atrg-core/src/ \
+            crates/atrg-auth/src/ \
+            crates/atrg-db/src/ \
+            crates/atrg-stream/src/ \
+            crates/atrg-xrpc/src/ \
+            crates/atrg-identity/src/ \
+            crates/atrg-codegen/src/ \
+            --include="*.rs" \
+            | grep -v "cfg(test)" \
+            | grep -v "mod tests" \
+            | grep -v "#\[test\]" \
+            | grep -v "fn test_" \
+            || true)
+          if [ -n "$UNWRAPS" ]; then
+            echo "FAIL: unwrap() found in production library code:"
+            echo "$UNWRAPS"
+            exit 1
+          fi
+          echo "✓ No unwrap() in production library code"
+
+      - name: No template/frontend crates in dependency tree
+        run: |
+          # Need Rust to run cargo tree
+          rustup default stable
+          cargo tree --workspace 2>/dev/null \
+            | grep -iE "minijinja|tera|askama|handlebars" \
+            && (echo "FAIL: frontend template crate found" && exit 1) \
+            || echo "✓ No template/frontend crates in dependency tree"
+
+  # ─── Build & test (needs more RAM) ────────────────────────────────
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest-4-cores
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build-test
+
+      - name: Build workspace
+        run: cargo build --workspace
+
       - name: Run all tests
         run: cargo test --workspace
 
-      # 5. Build CLI in release mode
+  # ─── Build CLI release binary (reused by downstream jobs) ─────────
+  build-cli:
+    name: Build CLI
+    runs-on: ubuntu-latest-4-cores
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build-cli
+
       - name: Build CLI (release)
         run: cargo build -p atrg-cli --release
 
-      # 6. Scaffold a project and verify it compiles
-      - name: Scaffold project via atrg new
+      - name: Upload CLI binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: atrg-cli
+          path: target/release/atrg
+          retention-days: 1
+
+  # ─── Scaffold & server E2E (uses pre-built CLI) ──────────────────
+  scaffold-e2e:
+    name: Scaffold & Server E2E
+    needs: [build-cli, test]
+    runs-on: ubuntu-latest-4-cores
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build-test
+
+      - name: Download CLI binary
+        uses: actions/download-artifact@v4
+        with:
+          name: atrg-cli
+          path: /tmp/bin
+      - run: chmod +x /tmp/bin/atrg
+
+      - name: Scaffold project
+        run: /tmp/bin/atrg new e2e-test-app --path /tmp/e2e-test-app
+
+      - name: Patch scaffold to use local crates
+        working-directory: /tmp/e2e-test-app
         run: |
-          ./target/release/atrg new e2e-test-app --path /tmp/e2e-test-app
-          cd /tmp/e2e-test-app
-          # Patch dependencies to point at workspace (not crates.io)
-          cat >> Cargo.toml << 'EOF'
+          cat >> Cargo.toml << EOF
 
           [patch.crates-io]
           atrg-core = { path = "${{ github.workspace }}/crates/atrg-core" }
@@ -59,97 +143,121 @@ jobs:
           atrg-codegen = { path = "${{ github.workspace }}/crates/atrg-codegen" }
           atrg-testing = { path = "${{ github.workspace }}/crates/atrg-testing" }
           EOF
-          cargo check
 
-      # 7. Start scaffolded server and test endpoints
-      - name: Test scaffolded server endpoints
+      - name: Check scaffold compiles
+        working-directory: /tmp/e2e-test-app
+        run: cargo check
+
+      - name: Build scaffold binary
+        working-directory: /tmp/e2e-test-app
+        run: cargo build
+
+      - name: Test server endpoints
+        working-directory: /tmp/e2e-test-app
         run: |
-          cd /tmp/e2e-test-app
           # Start server in background
           cargo run &
           SERVER_PID=$!
+          trap "kill $SERVER_PID 2>/dev/null || true" EXIT
 
-          # Wait for server to be ready
-          for i in $(seq 1 30); do
+          # Wait for server to be ready (up to 60s)
+          for i in $(seq 1 60); do
             if curl -sf http://127.0.0.1:3000/healthz > /dev/null 2>&1; then
               echo "Server ready after ${i}s"
               break
             fi
+            if [ $i -eq 60 ]; then
+              echo "FAIL: Server did not start within 60s"
+              exit 1
+            fi
             sleep 1
           done
 
-          # Test health endpoint
-          echo "--- Testing /healthz ---"
+          PASS=0
+          FAIL=0
+          check() {
+            local name="$1" expect="$2" actual="$3"
+            if echo "$actual" | grep -q "$expect"; then
+              echo "  ✓ $name"
+              PASS=$((PASS + 1))
+            else
+              echo "  ✗ $name (expected: $expect, got: $actual)"
+              FAIL=$((FAIL + 1))
+            fi
+          }
+
+          echo "=== Endpoint Tests ==="
+
+          # Health
           HEALTH=$(curl -sf http://127.0.0.1:3000/healthz)
-          echo "$HEALTH"
-          echo "$HEALTH" | grep -q '"ok":true' || (echo "FAIL: /healthz" && exit 1)
+          check "/healthz returns ok" '"ok":true' "$HEALTH"
 
-          # Test readiness endpoint
-          echo "--- Testing /readyz ---"
+          # Readiness
           READY=$(curl -sf http://127.0.0.1:3000/readyz)
-          echo "$READY"
-          echo "$READY" | grep -q '"ok":true' || (echo "FAIL: /readyz" && exit 1)
-          echo "$READY" | grep -q '"database":"connected"' || (echo "FAIL: /readyz db" && exit 1)
+          check "/readyz returns ok" '"ok":true' "$READY"
+          check "/readyz shows database" '"database":"connected"' "$READY"
 
-          # Test index route
-          echo "--- Testing / ---"
+          # Index
           INDEX=$(curl -sf http://127.0.0.1:3000/)
-          echo "$INDEX"
-          echo "$INDEX" | grep -q '"status":"ok"' || (echo "FAIL: /" && exit 1)
+          check "/ returns status ok" '"status":"ok"' "$INDEX"
 
-          # Test 404 returns JSON
-          echo "--- Testing 404 ---"
-          NOT_FOUND=$(curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/does-not-exist || true)
-          BODY=$(curl -s http://127.0.0.1:3000/does-not-exist)
-          echo "Status: $NOT_FOUND Body: $BODY"
-          echo "$BODY" | grep -q '"error":"not_found"' || (echo "FAIL: 404 body" && exit 1)
+          # 404
+          BODY_404=$(curl -s http://127.0.0.1:3000/does-not-exist)
+          check "404 returns JSON error" '"error":"not_found"' "$BODY_404"
 
-          # Test auth session without auth returns 401
-          echo "--- Testing /auth/session (no auth) ---"
-          AUTH_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/auth/session || true)
-          echo "Status: $AUTH_STATUS"
-          [ "$AUTH_STATUS" = "401" ] || (echo "FAIL: /auth/session should be 401" && exit 1)
+          # Auth session (no auth → 401)
+          STATUS_SESSION=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/auth/session)
+          check "/auth/session → 401" "401" "$STATUS_SESSION"
 
-          # Test auth login without handle returns 400
-          echo "--- Testing /auth/login (no handle) ---"
-          LOGIN_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/auth/login || true)
-          echo "Status: $LOGIN_STATUS"
-          [ "$LOGIN_STATUS" = "400" ] || (echo "FAIL: /auth/login should be 400" && exit 1)
+          # Auth login (no handle → 400)
+          STATUS_LOGIN=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/auth/login)
+          check "/auth/login → 400" "400" "$STATUS_LOGIN"
 
-          # Test client-metadata.json
-          echo "--- Testing /client-metadata.json ---"
+          # Client metadata
           META=$(curl -sf http://127.0.0.1:3000/client-metadata.json)
-          echo "$META"
-          echo "$META" | grep -q '"client_id"' || (echo "FAIL: client-metadata" && exit 1)
+          check "/client-metadata.json" '"client_id"' "$META"
 
-          # Test well-known
-          echo "--- Testing /.well-known/oauth-protected-resource ---"
+          # Well-known
           WK=$(curl -sf http://127.0.0.1:3000/.well-known/oauth-protected-resource)
-          echo "$WK"
-          echo "$WK" | grep -q '"resource"' || (echo "FAIL: well-known" && exit 1)
+          check "/.well-known/oauth-protected-resource" '"resource"' "$WK"
 
-          # Test Content-Type is JSON
-          echo "--- Testing Content-Type headers ---"
+          # Content-Type
           CT=$(curl -sf -o /dev/null -w "%{content_type}" http://127.0.0.1:3000/)
-          echo "Content-Type: $CT"
-          echo "$CT" | grep -q "application/json" || (echo "FAIL: Content-Type" && exit 1)
+          check "Content-Type is JSON" "application/json" "$CT"
 
-          # Test X-Request-Id header is present
-          echo "--- Testing X-Request-Id ---"
-          REQ_ID=$(curl -sf -D - http://127.0.0.1:3000/ -o /dev/null | grep -i "x-request-id")
-          echo "$REQ_ID"
-          [ -n "$REQ_ID" ] || (echo "FAIL: X-Request-Id missing" && exit 1)
+          # X-Request-Id
+          HEADERS=$(curl -sf -D - http://127.0.0.1:3000/ -o /dev/null 2>&1)
+          check "X-Request-Id present" "x-request-id" "$(echo "$HEADERS" | tr '[:upper:]' '[:lower:]')"
 
           echo ""
-          echo "=== All E2E tests passed ==="
+          echo "=== Results: $PASS passed, $FAIL failed ==="
+          [ "$FAIL" -eq 0 ] || exit 1
 
-          kill $SERVER_PID 2>/dev/null || true
+  # ─── Codegen E2E (uses pre-built CLI, lightweight) ────────────────
+  codegen-e2e:
+    name: Codegen E2E
+    needs: [build-cli]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      # 8. Test codegen with a fixture lexicon
+      - name: Download CLI binary
+        uses: actions/download-artifact@v4
+        with:
+          name: atrg-cli
+          path: /tmp/bin
+      - run: chmod +x /tmp/bin/atrg
+
+      - name: Test CLI commands
+        run: |
+          /tmp/bin/atrg version
+          /tmp/bin/atrg routes
+
       - name: Test lexicon code generation
         run: |
           mkdir -p /tmp/lexicons /tmp/generated
-          cat > /tmp/lexicons/ping.json << 'EOF'
+
+          cat > /tmp/lexicons/ping.json << 'LEXEOF'
           {
             "lexicon": 1,
             "id": "com.example.ping",
@@ -171,79 +279,107 @@ jobs:
               }
             }
           }
-          EOF
-          ./target/release/atrg generate --input /tmp/lexicons --output /tmp/generated
-          echo "--- Generated types.rs ---"
+          LEXEOF
+
+          cat > /tmp/lexicons/todo.json << 'LEXEOF'
+          {
+            "lexicon": 1,
+            "id": "com.example.todo.createItem",
+            "defs": {
+              "main": {
+                "type": "procedure",
+                "description": "Create a todo item",
+                "input": {
+                  "encoding": "application/json",
+                  "schema": {
+                    "type": "object",
+                    "required": ["title"],
+                    "properties": {
+                      "title": { "type": "string", "max_length": 500 },
+                      "done": { "type": "boolean" }
+                    }
+                  }
+                },
+                "output": {
+                  "encoding": "application/json",
+                  "schema": {
+                    "type": "object",
+                    "required": ["uri"],
+                    "properties": {
+                      "uri": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+          LEXEOF
+
+          /tmp/bin/atrg generate --input /tmp/lexicons --output /tmp/generated
+
+          echo "--- Generated files ---"
+          ls -la /tmp/generated/
+
+          echo "--- types.rs ---"
           cat /tmp/generated/types.rs
-          echo "--- Generated mod.rs ---"
-          cat /tmp/generated/mod.rs
-          # Verify generated code contains expected type
-          grep -q "ComExamplePingOutput" /tmp/generated/types.rs || (echo "FAIL: missing generated type" && exit 1)
-          echo "=== Codegen test passed ==="
 
-      # 9. Verify CLI commands work
-      - name: Test CLI commands
-        run: |
-          ./target/release/atrg version
-          ./target/release/atrg routes
+          # Verify generated types
+          grep -q "ComExamplePingOutput" /tmp/generated/types.rs \
+            || (echo "FAIL: missing ComExamplePingOutput" && exit 1)
+          grep -q "ComExampleTodoCreateItemInput" /tmp/generated/types.rs \
+            || (echo "FAIL: missing ComExampleTodoCreateItemInput" && exit 1)
+          grep -q "pub title: String" /tmp/generated/types.rs \
+            || (echo "FAIL: missing title field" && exit 1)
 
-      # 10. Verify no unwrap() in production crates
-      - name: Audit for unwrap() in library code
-        run: |
-          # Check production crates only (exclude atrg-testing which is dev-only)
-          UNWRAPS=$(grep -rn "\.unwrap()" \
-            crates/atrg-core/src/ \
-            crates/atrg-auth/src/ \
-            crates/atrg-db/src/ \
-            crates/atrg-stream/src/ \
-            crates/atrg-xrpc/src/ \
-            crates/atrg-identity/src/ \
-            crates/atrg-codegen/src/ \
-            crates/atrg-cli/src/ \
-            --include="*.rs" \
-            | grep -v "#\[cfg(test)\]" \
-            | grep -v "mod tests" \
-            | grep -v "#\[test\]" \
-            | grep -v "fn test_" \
-            | grep -v "// test" \
-            || true)
+          # Verify routes were generated
+          grep -q "xrpc_routes" /tmp/generated/routes.rs \
+            || (echo "FAIL: missing xrpc_routes" && exit 1)
 
-          if [ -n "$UNWRAPS" ]; then
-            echo "WARNING: unwrap() found in production code (review needed):"
-            echo "$UNWRAPS"
-            # Don't fail — some are in CLI code which is acceptable
-          else
-            echo "✓ No unwrap() in production library code"
-          fi
+          echo "✓ Codegen E2E passed"
 
-      # 11. Verify no frontend/template crates in dependency tree
-      - name: Audit dependency tree
-        run: |
-          cargo tree --workspace 2>/dev/null | grep -iE "minijinja|tera|askama|handlebars" && \
-            (echo "FAIL: frontend template crate found in dependencies" && exit 1) || \
-            echo "✓ No template/frontend crates in dependency tree"
+  # ─── Documentation build ──────────────────────────────────────────
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
-      # 12. Cargo doc builds without warnings
-      - name: Build documentation
-        run: cargo doc --workspace --no-deps 2>&1 | tee /tmp/doc-output.txt
+      - name: Build docs (warning-free)
+        run: cargo doc --workspace --no-deps
         env:
           RUSTDOCFLAGS: "-D warnings"
-        continue-on-error: true
 
-      # 13. Summary
-      - name: Summary
+  # ─── Final gate ───────────────────────────────────────────────────
+  e2e-pass:
+    name: E2E Gate ✓
+    if: always()
+    needs: [lint, audit, test, scaffold-e2e, codegen-e2e, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs passed
         run: |
+          echo "Job results:"
+          echo "  lint:         ${{ needs.lint.result }}"
+          echo "  audit:        ${{ needs.audit.result }}"
+          echo "  test:         ${{ needs.test.result }}"
+          echo "  scaffold-e2e: ${{ needs.scaffold-e2e.result }}"
+          echo "  codegen-e2e:  ${{ needs.codegen-e2e.result }}"
+          echo "  docs:         ${{ needs.docs.result }}"
+
+          if [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.audit.result }}" != "success" ] || \
+             [ "${{ needs.test.result }}" != "success" ] || \
+             [ "${{ needs.scaffold-e2e.result }}" != "success" ] || \
+             [ "${{ needs.codegen-e2e.result }}" != "success" ] || \
+             [ "${{ needs.docs.result }}" != "success" ]; then
+            echo ""
+            echo "FAIL: One or more E2E jobs did not pass"
+            exit 1
+          fi
+
+          echo ""
           echo "==============================="
-          echo "  E2E Test Suite Summary"
-          echo "==============================="
-          echo "✓ Workspace builds"
-          echo "✓ Formatting passes"
-          echo "✓ Clippy passes (zero warnings)"
-          echo "✓ All tests pass"
-          echo "✓ CLI builds in release mode"
-          echo "✓ Scaffolded project compiles"
-          echo "✓ Server endpoints respond correctly"
-          echo "✓ Codegen produces valid output"
-          echo "✓ CLI commands work"
-          echo "✓ No template crates in deps"
+          echo "  All E2E checks passed ✓"
           echo "==============================="
