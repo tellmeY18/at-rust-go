@@ -21,10 +21,11 @@ use crate::types::{BlobRef, Page, Record, StrongRef};
 ///
 /// ```rust,no_run
 /// # use atrg_repo::Repo;
-/// # async fn example(http: &reqwest::Client) {
+/// # async fn example(http: &reqwest::Client) -> Result<(), Box<dyn std::error::Error>> {
 /// let repo = Repo::new(http, "https://pds.example.com", "token", "did:plc:abc123");
 /// let record = serde_json::json!({ "text": "Hello world" });
-/// let strong_ref = repo.create_record("app.bsky.feed.post", &record).await.unwrap();
+/// let strong_ref = repo.create_record("app.bsky.feed.post", &record).await?;
+/// # Ok(())
 /// # }
 /// ```
 pub struct Repo {
