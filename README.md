@@ -4,6 +4,8 @@
 
 **atrg is headless / API-only.** It provides everything you need to stand up a federated AT Protocol API server — OAuth, Jetstream event streaming, XRPC endpoints, and JSON HTTP routes. Bring your own frontend (web, mobile, native — atrg doesn't care).
 
+**Current version: 0.1.1** — [crates.io](https://crates.io/crates/atrg-cli) | [API docs](https://tellmeY18.github.io/at-rust-go/api/atrg_core/) | [llms.txt](https://tellmeY18.github.io/at-rust-go/llms.txt)
+
 ---
 
 ## Getting Started
@@ -80,6 +82,20 @@ url = "sqlite://atrg.db"
 # [jetstream]
 # host = "jetstream1.us-east.bsky.network"
 # collections = ["app.bsky.feed.post"]
+
+# [firehose]
+# relay = "wss://bsky.network"
+
+# [feed_generator]
+# did = "did:web:feeds.example.com"
+
+# [labeler]
+# did = "did:web:labels.example.com"
+# signing_key_path = "keys/labeler.pem"
+
+# [rate_limit]
+# requests_per_second = 10.0
+# burst = 50
 ```
 
 ---
@@ -190,6 +206,30 @@ atrg generate --input lexicons/ --output src/generated/
 
 This produces strongly-typed `serde` structs, Axum handler stubs, and a `xrpc_routes()` function — all from **your** lexicons, not any bundled ones.
 
+### Feed Generator Framework
+
+Build custom AT Protocol feed generators with minimal boilerplate — register algorithms, and atrg handles `describeFeedGenerator` and `getFeedSkeleton` XRPC routes automatically.
+
+### Labeler Framework
+
+Run an AT Protocol label service: create, negate, and query labels backed by SQLite, with a placeholder signing pipeline and a `queryLabels` XRPC route.
+
+### Firehose Relay Subscription
+
+Subscribe to the full `com.atproto.sync.subscribeRepos` firehose with CAR v1 decoding, CBOR→JSON conversion, and cursor tracking.
+
+### Rate Limiting
+
+Per-IP token-bucket rate limiting middleware, configurable via `[rate_limit]` in `atrg.toml`.
+
+### Environment Variable Overrides
+
+Override any `atrg.toml` field with environment variables (e.g. `ATRG_APP__PORT=8080`).
+
+### Graceful Shutdown
+
+Handles SIGTERM/SIGINT with DB pool drain and configurable timeout — production-ready out of the box.
+
 ### DID/Handle Resolution
 
 Every identity lookup goes through a TTL-backed in-memory cache:
@@ -255,10 +295,14 @@ atrg (workspace)
 ├── atrg-core       — AppState, config, app builder, error types, pagination
 ├── atrg-auth       — OAuth flow, session management, JWT verification, extractors
 ├── atrg-stream     — Jetstream consumer with backpressure and metrics
+├── atrg-firehose   — Full relay firehose consumer with CAR decoding and cursor tracking
 ├── atrg-db         — SQLite connection pool + migration runner
 ├── atrg-xrpc       — XRPC router factory + AT Protocol error envelope
 ├── atrg-identity   — DID/handle resolution with TTL cache
+├── atrg-repo       — Typed record CRUD, blob uploads, AT-URI parsing, TID generation
 ├── atrg-codegen    — Lexicon JSON → Rust code generator
+├── atrg-feed       — Feed generator builder with multi-feed support
+├── atrg-label      — Label service with SQLite-backed store and signing
 ├── atrg-testing    — Mock clients, fake Jetstream, test helpers
 └── atrg-cli        — The `atrg` binary
 ```

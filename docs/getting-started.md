@@ -69,6 +69,8 @@ redirect_uri = "http://localhost:3000/auth/callback"
 url = "sqlite://atrg.db"
 ```
 
+> **Tip:** Additional optional sections are available: `[jetstream]`, `[firehose]`, `[feed_generator]`, `[labeler]`, `[rate_limit]`. See the [full configuration reference](https://github.com/tellmeY18/at-rust-go/blob/main/README.md#configuration) for details.
+
 ## Next Steps
 
 - [OAuth Authentication](oauth.md)

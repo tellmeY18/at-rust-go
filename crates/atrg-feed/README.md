@@ -72,9 +72,10 @@ The `FeedRequest` passed to your handler includes:
 
 ```rust
 pub struct FeedRequest {
-    pub feed_uri: String,     // The AT-URI of the requested feed
-    pub cursor: Option<String>, // Pagination cursor from the client
-    pub limit: usize,          // Requested page size (default 50, max 100)
+    pub feed: String,              // The AT-URI of the requested feed
+    pub cursor: Option<String>,    // Pagination cursor from the client
+    pub limit: usize,              // Requested page size (default 50, max 100)
+    pub requester_did: Option<String>, // DID of the requesting user, if authenticated
 }
 ```
 

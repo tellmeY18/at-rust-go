@@ -72,13 +72,19 @@ async fn example(db: SqlitePool) -> anyhow::Result<()> {
 ### Mounting label routes in your app
 
 ```rust
+use std::sync::Arc;
 use atrg_core::AtrgApp;
-use atrg_label::routes::label_routes;
+use atrg_label::routes::labeler_routes;
+use atrg_label::{LabelService, signing::LabelSigner};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Build your LabelService (db, signer, and DID configured elsewhere)
+    let signer = LabelSigner::from_pem("path/to/private-key.pem")?;
+    let service = Arc::new(LabelService::new(db, signer, "did:web:labeler.example.com".into()));
+
     AtrgApp::new()
-        .mount(label_routes())
+        .mount(labeler_routes(service))
         .run()
         .await
 }

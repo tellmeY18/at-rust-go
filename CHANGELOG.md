@@ -1,73 +1,54 @@
 # Changelog
 
-All notable changes to at-rust-go (atrg) will be documented in this file.
+All notable changes to at-rust-go are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [0.1.1] — 2026-04-26
 
-## [0.1.0] — Unreleased
+### Fixed
+- Corrected license to LGPL-3.0-only across all Cargo.toml and documentation (was incorrectly MIT OR Apache-2.0).
+- Fixed `unwrap()` in doc example in `atrg-repo`.
+
+### Added
+- README.md for all 13 crates (displayed on crates.io).
+- `homepage` field in workspace Cargo.toml.
+- `readme` field in all crate Cargo.toml files.
+
+## [0.1.0] — 2026-04-26
 
 ### Added
 
-#### Core (`atrg-core`)
-- `AtrgApp` builder with `new()`, `mount()`, `with_auth_routes()`, `with_cleanup_task()`, `on_event()`, and `run()`
-- `Config` loader from `atrg.toml` with validation and sane defaults
-- `AppState` with config, database pool, HTTP client, and identity resolver
-- `AtrgError` enum with JSON `IntoResponse` (400/401/404/500)
-- CORS layer builder from config
-- Cursor-based pagination helpers (`encode_cursor`, `decode_cursor`, `PaginationParams`)
-- Security headers middleware (production mode)
-- Request ID middleware (`X-Request-Id`)
-- Built-in `/healthz` and `/readyz` endpoints
+#### Core Framework
+- `atrg-core`: AppState, Config (atrg.toml), AtrgApp builder, AtrgError, CORS, security headers, request IDs, health/readiness endpoints, pagination helpers.
+- `atrg-db`: SQLite connection pool via sqlx, internal + user migration runner.
+- `atrg-identity`: DID/handle resolution with moka TTL-backed cache.
+- `atrg-cli`: `atrg new`, `atrg dev`, `atrg migrate`, `atrg routes`, `atrg build`, `atrg generate` commands.
 
-#### Auth (`atrg-auth`)
-- OAuth login/callback/logout routes
-- `AuthUser` (optional) and `RequireAuth` (strict) Axum extractors
-- Session management with SQLite storage
-- AT Protocol JWT claim parsing and verification
-- Cookie + Bearer token dual authentication path
-- Periodic session cleanup task
+#### Authentication
+- `atrg-auth`: OAuth login/callback/logout routes, session management, AT Protocol JWT verification, `AuthUser`/`RequireAuth` extractors, transparent token refresh.
 
-#### Streaming (`atrg-stream`)
-- Jetstream WebSocket consumer with automatic reconnection
-- Bounded backpressure via configurable `mpsc` channel
-- Lag detection and event dropping at threshold
-- Exponential backoff (1s → 60s cap)
-- ZSTD dictionary auto-fetch with disk caching
-- Atomic metrics counters
+#### Real-time Events
+- `atrg-stream`: Jetstream WebSocket consumer with bounded backpressure, lag detection, ZSTD dictionary support, automatic reconnection.
+- `atrg-firehose`: Full relay firehose (`com.atproto.sync.subscribeRepos`) consumer with CAR v1 decoding, CBOR→JSON conversion, cursor tracking.
 
-#### XRPC (`atrg-xrpc`)
-- `xrpc_router()` factory with 501 fallback for unmatched methods
-- `XrpcError` type implementing the AT Protocol error envelope
-- All 7 error variants: InvalidRequest, AuthRequired, Forbidden, NotFound, RateLimitExceeded, InternalServerError, MethodNotImplemented
-- `From<AtrgError>` conversion for seamless error propagation
+#### XRPC & Codegen
+- `atrg-xrpc`: XRPC router factory, AT Protocol error envelope, helper constructors.
+- `atrg-codegen`: Lexicon JSON → Rust types, validators, and XRPC route stubs.
 
-#### Database (`atrg-db`)
-- SQLite connection pool with WAL mode and foreign keys
-- Internal migration runner (sessions, OAuth states)
-- User migration runner from project `migrations/` directory
+#### Record Operations
+- `atrg-repo`: Typed record CRUD (`get/list/create/put/delete`), blob uploads, AT-URI parsing/validation, TID generation.
 
-#### Identity (`atrg-identity`)
-- `IdentityResolver` with `moka` TTL-backed cache
-- DID resolution (did:plc via PLC directory, did:web)
-- Handle resolution
-- Cache metrics (hits, misses, entry count)
+#### Feed & Label Frameworks
+- `atrg-feed`: Feed generator builder, `describeFeedGenerator` + `getFeedSkeleton` XRPC routes, multi-feed support.
+- `atrg-label`: Label service (create/negate/query), SQLite-backed label store, placeholder signing, `queryLabels` XRPC route.
 
-#### Code Generation (`atrg-codegen`)
-- Lexicon JSON parser with validation
-- Rust struct generation from record/object/query/procedure definitions
-- XRPC route stub generation
-- `prettyplease`-formatted output
+#### Production Hardening
+- Graceful shutdown (SIGTERM/SIGINT handling, DB pool drain with timeout).
+- Per-IP token-bucket rate limiting middleware.
+- Environment variable overrides for all atrg.toml fields (`ATRG_APP__PORT`, etc.).
 
-#### Testing (`atrg-testing`)
-- `test_state()` and `test_app()` builders with in-memory SQLite
-- `seed_session()` for authenticated handler tests
-- `MockAtprotoClient` with call recording and response scripting
-- `FakeJetstream` with synthetic event emission
+#### Testing
+- `atrg-testing`: `test_state()` with in-memory SQLite, `seed_session()`, `MockAtprotoClient`, `FakeJetstream`.
 
-#### CLI (`atrg-cli`)
-- `atrg new <name>` — project scaffolding
-- `atrg dev` — development server with cargo-watch
-- `atrg migrate` — database migration runner
-- `atrg routes` — route listing
-- `atrg build` — release build wrapper
+#### CI/CD
+- GitHub Actions: fmt, clippy, test, coverage (per-crate thresholds), E2E scaffold tests, codegen E2E, documentation build.
+- GitHub Pages workflow for API docs, llms.txt, llms-full.txt.

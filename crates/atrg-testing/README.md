@@ -73,8 +73,7 @@ async fn test_authenticated_route() {
         "did:plc:testuser",
         "test.handle",
     )
-    .await
-    .unwrap();
+    .await;
 
     // Use session_id as a Bearer token or cookie in your request
 }

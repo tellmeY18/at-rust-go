@@ -63,9 +63,9 @@ async fn example(http: &reqwest::Client) -> anyhow::Result<()> {
 use atrg_repo::{AtUri, Tid};
 
 // Parse an AT-URI
-let uri = AtUri::new("at://did:plc:abc123/app.bsky.feed.post/3k2la7b");
-assert_eq!(uri.did(), "did:plc:abc123");
-assert_eq!(uri.collection(), Some("app.bsky.feed.post"));
+let uri = AtUri::parse("at://did:plc:abc123/app.bsky.feed.post/3k2la7b")?;
+assert_eq!(uri.authority, "did:plc:abc123");
+assert_eq!(uri.collection, "app.bsky.feed.post");
 
 // Generate a TID for a new record key
 let tid = Tid::now();
@@ -82,7 +82,7 @@ async fn upload(http: &reqwest::Client) -> anyhow::Result<()> {
         http,
         "https://pds.example.com",
         "access-token",
-        b"image data here",
+        b"image data here".to_vec(),
         "image/png",
     ).await?;
     println!("Blob ref: {:?}", blob_ref);
