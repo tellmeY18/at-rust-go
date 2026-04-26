@@ -59,7 +59,7 @@ pub fn generate(
     for entry in walkdir::WalkDir::new(input_dir)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "json"))
     {
         let content = std::fs::read_to_string(entry.path())?;
         match lexicon::parse_lexicon(&content) {
@@ -166,18 +166,16 @@ fn generate_for_lexicon(
         match def {
             LexiconDef::Record {
                 description,
-                record,
+                record: Some(obj),
                 ..
             } => {
-                if let Some(obj) = record {
-                    let struct_name = if def_name == "main" {
-                        format!("{type_prefix}Record")
-                    } else {
-                        format!("{type_prefix}{}", def_name.to_case(Case::Pascal))
-                    };
-                    code.push_str(&generate_struct(&struct_name, description.as_deref(), obj));
-                    type_count += 1;
-                }
+                let struct_name = if def_name == "main" {
+                    format!("{type_prefix}Record")
+                } else {
+                    format!("{type_prefix}{}", def_name.to_case(Case::Pascal))
+                };
+                code.push_str(&generate_struct(&struct_name, description.as_deref(), obj));
+                type_count += 1;
             }
             LexiconDef::Object(obj) => {
                 let struct_name = if def_name == "main" {
@@ -368,7 +366,10 @@ fn nsid_to_type_prefix(nsid: &str) -> String {
 }
 
 fn nsid_to_handler_name(nsid: &str) -> String {
-    nsid.split('.').last().unwrap_or(nsid).to_case(Case::Snake)
+    nsid.split('.')
+        .next_back()
+        .unwrap_or(nsid)
+        .to_case(Case::Snake)
 }
 
 fn format_code(code: &str) -> String {

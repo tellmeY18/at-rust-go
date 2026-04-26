@@ -211,13 +211,13 @@ impl Config {
                 e
             )
         })?;
-        Self::from_str(&contents)
+        Self::parse_toml(&contents)
     }
 
     /// Parse and validate a [`Config`] from a TOML string.
     ///
     /// This is the inner implementation shared by [`Config::load`] and tests.
-    pub fn from_str(toml_str: &str) -> anyhow::Result<Self> {
+    pub fn parse_toml(toml_str: &str) -> anyhow::Result<Self> {
         let config: Config = toml::from_str(toml_str).map_err(|e| {
             // Provide a friendlier message when a required section is missing.
             let msg = e.to_string();
@@ -345,7 +345,7 @@ secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 
     #[test]
     fn parse_full_config() {
-        let cfg = Config::from_str(FULL_CONFIG).expect("should parse full config");
+        let cfg = Config::parse_toml(FULL_CONFIG).expect("should parse full config");
 
         assert_eq!(cfg.app.name, "my-app");
         assert_eq!(cfg.app.host, "0.0.0.0");
@@ -375,7 +375,7 @@ secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 
     #[test]
     fn parse_minimal_config_defaults_applied() {
-        let cfg = Config::from_str(MINIMAL_CONFIG).expect("should parse minimal config");
+        let cfg = Config::parse_toml(MINIMAL_CONFIG).expect("should parse minimal config");
 
         // Explicit values
         assert_eq!(cfg.app.name, "tiny");
@@ -403,7 +403,7 @@ secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 [database]
 url = "sqlite://test.db"
 "#;
-        let err = Config::from_str(toml).unwrap_err();
+        let err = Config::parse_toml(toml).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("[app] section is required"),
@@ -418,7 +418,7 @@ url = "sqlite://test.db"
 name = ""
 secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 "#;
-        let err = Config::from_str(toml).unwrap_err();
+        let err = Config::parse_toml(toml).unwrap_err();
         assert!(
             err.to_string().contains("app.name must not be empty"),
             "got: {}",
@@ -433,7 +433,7 @@ secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 name = "test"
 secret_key = ""
 "#;
-        let err = Config::from_str(toml).unwrap_err();
+        let err = Config::parse_toml(toml).unwrap_err();
         assert!(
             err.to_string().contains("app.secret_key must not be empty"),
             "got: {}",
@@ -451,7 +451,7 @@ secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 [auth]
 redirect_uri = "not a url at all"
 "#;
-        let err = Config::from_str(toml).unwrap_err();
+        let err = Config::parse_toml(toml).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("auth.redirect_uri") && msg.contains("not a valid URL"),
@@ -469,7 +469,7 @@ secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 [auth]
 client_id = "not a url"
 "#;
-        let err = Config::from_str(toml).unwrap_err();
+        let err = Config::parse_toml(toml).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("auth.client_id") && msg.contains("not a valid URL"),
@@ -485,7 +485,7 @@ name = "test"
 secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 cors_origins = ["http://ok.example.com", "\x00bad"]
 "#;
-        let err = Config::from_str(toml).unwrap_err();
+        let err = Config::parse_toml(toml).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("cors_origins"),
@@ -501,7 +501,7 @@ name = "test"
 secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 cors_origins = ["*"]
 "#;
-        Config::from_str(toml).expect("wildcard should be accepted");
+        Config::parse_toml(toml).expect("wildcard should be accepted");
     }
 
     #[test]
@@ -515,7 +515,7 @@ secret_key = "abcdefghijklmnopqrstuvwxyz123456"
 host = "jetstream1.us-east.bsky.network"
 collections = ["app.bsky.feed.post"]
 "#;
-        let cfg = Config::from_str(toml).unwrap();
+        let cfg = Config::parse_toml(toml).unwrap();
         let js = cfg.jetstream.unwrap();
         assert_eq!(js.channel_capacity, 1024);
         assert_eq!(js.max_lag_events, 10_000);

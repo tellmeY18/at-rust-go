@@ -123,7 +123,7 @@ fn spawn_reader(
                 }
             }
 
-            let delay = backoff.next();
+            let delay = backoff.next_delay();
             metrics
                 .current_backoff_ms
                 .store(delay.as_millis() as u64, Ordering::Relaxed);

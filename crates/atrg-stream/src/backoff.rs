@@ -20,7 +20,7 @@ impl Backoff {
     }
 
     /// Get the next backoff duration and advance the state.
-    pub fn next(&mut self) -> Duration {
+    pub fn next_delay(&mut self) -> Duration {
         let duration = self.current;
         self.current = (self.current * 2).min(self.max);
         duration
@@ -50,35 +50,35 @@ mod tests {
     #[test]
     fn backoff_doubles() {
         let mut b = Backoff::new();
-        assert_eq!(b.next(), Duration::from_secs(1));
-        assert_eq!(b.next(), Duration::from_secs(2));
-        assert_eq!(b.next(), Duration::from_secs(4));
-        assert_eq!(b.next(), Duration::from_secs(8));
+        assert_eq!(b.next_delay(), Duration::from_secs(1));
+        assert_eq!(b.next_delay(), Duration::from_secs(2));
+        assert_eq!(b.next_delay(), Duration::from_secs(4));
+        assert_eq!(b.next_delay(), Duration::from_secs(8));
     }
 
     #[test]
     fn backoff_caps_at_60s() {
         let mut b = Backoff::new();
         for _ in 0..20 {
-            b.next();
+            b.next_delay();
         }
-        assert_eq!(b.next(), Duration::from_secs(60));
+        assert_eq!(b.next_delay(), Duration::from_secs(60));
     }
 
     #[test]
     fn backoff_resets() {
         let mut b = Backoff::new();
-        b.next();
-        b.next();
+        b.next_delay();
+        b.next_delay();
         b.reset();
-        assert_eq!(b.next(), Duration::from_secs(1));
+        assert_eq!(b.next_delay(), Duration::from_secs(1));
     }
 
     #[test]
     fn current_ms_reflects_state() {
         let mut b = Backoff::new();
         assert_eq!(b.current_ms(), 1000);
-        b.next();
+        b.next_delay();
         assert_eq!(b.current_ms(), 2000);
     }
 
