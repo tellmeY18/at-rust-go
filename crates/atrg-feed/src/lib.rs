@@ -28,4 +28,6 @@ pub mod types;
 
 pub use generator::FeedGenerator;
 pub use handler::{FeedHandler, FeedRequest};
-pub use types::{DescribeFeedGeneratorResponse, FeedConfig, FeedDescription, FeedSkeleton, SkeletonItem};
+pub use types::{
+    DescribeFeedGeneratorResponse, FeedConfig, FeedDescription, FeedSkeleton, SkeletonItem,
+};

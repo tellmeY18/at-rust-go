@@ -63,7 +63,7 @@ jobs:
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
 
-      # ── Generate workspace-wide coverage report ──────────────────
+      # ── Generate workspace-wide coverage (lcov for upload) ───────
       - name: Generate coverage (lcov)
         run: |
           cargo llvm-cov --workspace \
@@ -72,93 +72,68 @@ jobs:
             --output-path lcov.info \
             -- --test-threads=1
 
-      # ── Per-crate coverage for new Phase 7-11 crates ─────────────
-      # These crates MUST maintain ≥95% line coverage.
-      # We use --text output and parse the TOTAL line.
-      - name: Check atrg-repo coverage
+      # ── Per-crate coverage enforcement ───────────────────────────
+      # Uses JSON output for reliable parsing. Each crate in the list
+      # must meet the minimum line-coverage threshold or the job fails.
+      - name: Enforce per-crate coverage thresholds
         run: |
-          OUTPUT=$(cargo llvm-cov --package atrg-repo --text -- --test-threads=1 2>&1)
-          echo "$OUTPUT"
-          TOTAL_LINE=$(echo "$OUTPUT" | grep "^TOTAL")
-          if [ -z "$TOTAL_LINE" ]; then
-            echo "FAIL: Could not find TOTAL line in coverage output"
-            exit 1
-          fi
-          # Extract region coverage percentage (second percentage in the line)
-          LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /[0-9]+\.[0-9]+%/) {gsub(/%/,"",$i); print $i; exit}}')
-          echo "atrg-repo line coverage: ${LINE_PCT}%"
-          if [ -z "$LINE_PCT" ]; then
-            echo "WARN: Could not parse coverage percentage, skipping threshold check"
-          else
-            PASS=$(echo "$LINE_PCT >= 85.0" | bc -l 2>/dev/null || echo "1")
-            if [ "$PASS" = "0" ]; then
-              echo "FAIL: atrg-repo coverage ${LINE_PCT}% is below 85% threshold"
-              exit 1
+          THRESHOLD=85
+          FAILED=0
+          SUMMARY=""
+
+          for CRATE in atrg-repo atrg-firehose atrg-feed atrg-label; do
+            echo "──────────────────────────────────────"
+            echo "Checking coverage for ${CRATE} (threshold: ${THRESHOLD}%)"
+
+            JSON=$(cargo llvm-cov --package "$CRATE" --json -- --test-threads=1 2>/dev/null)
+
+            # Extract line coverage from the JSON totals.
+            # The JSON schema has .data[0].totals.lines.percent
+            LINE_PCT=$(echo "$JSON" | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          pct = data['data'][0]['totals']['lines']['percent']
+          print(f'{pct:.2f}')
+          " 2>/dev/null || echo "")
+
+            if [ -z "$LINE_PCT" ]; then
+              echo "⚠ Could not parse coverage for ${CRATE}, skipping"
+              SUMMARY="${SUMMARY}| \`${CRATE}\` | ⚠ parse error | ${THRESHOLD}% |\n"
+              continue
             fi
+
+            # Compare using python3 (always available on ubuntu-latest,
+            # avoids bc/awk float-comparison fragility).
+            PASS=$(python3 -c "print(1 if float('${LINE_PCT}') >= ${THRESHOLD} else 0)")
+
+            if [ "$PASS" = "1" ]; then
+              echo "✓ ${CRATE}: ${LINE_PCT}% >= ${THRESHOLD}%"
+              SUMMARY="${SUMMARY}| \`${CRATE}\` | ✅ ${LINE_PCT}% | ${THRESHOLD}% |\n"
+            else
+              echo "✗ ${CRATE}: ${LINE_PCT}% < ${THRESHOLD}% — FAIL"
+              SUMMARY="${SUMMARY}| \`${CRATE}\` | ❌ ${LINE_PCT}% | ${THRESHOLD}% |\n"
+              FAILED=1
+            fi
+          done
+
+          echo ""
+          echo "══════════════════════════════════════"
+
+          # Write GitHub Actions job summary
+          {
+            echo "### Coverage Report"
+            echo ""
+            echo "| Crate | Line Coverage | Threshold |"
+            echo "|-------|-------------|-----------|"
+            printf "$SUMMARY"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$FAILED" = "1" ]; then
+            echo "FAIL: One or more crates are below the ${THRESHOLD}% coverage threshold"
+            exit 1
           fi
 
-      - name: Check atrg-firehose coverage
-        run: |
-          OUTPUT=$(cargo llvm-cov --package atrg-firehose --text -- --test-threads=1 2>&1)
-          echo "$OUTPUT"
-          TOTAL_LINE=$(echo "$OUTPUT" | grep "^TOTAL")
-          if [ -z "$TOTAL_LINE" ]; then
-            echo "FAIL: Could not find TOTAL line in coverage output"
-            exit 1
-          fi
-          LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /[0-9]+\.[0-9]+%/) {gsub(/%/,"",$i); print $i; exit}}')
-          echo "atrg-firehose line coverage: ${LINE_PCT}%"
-          if [ -z "$LINE_PCT" ]; then
-            echo "WARN: Could not parse coverage percentage, skipping threshold check"
-          else
-            PASS=$(echo "$LINE_PCT >= 85.0" | bc -l 2>/dev/null || echo "1")
-            if [ "$PASS" = "0" ]; then
-              echo "FAIL: atrg-firehose coverage ${LINE_PCT}% is below 85% threshold"
-              exit 1
-            fi
-          fi
-
-      - name: Check atrg-feed coverage
-        run: |
-          OUTPUT=$(cargo llvm-cov --package atrg-feed --text -- --test-threads=1 2>&1)
-          echo "$OUTPUT"
-          TOTAL_LINE=$(echo "$OUTPUT" | grep "^TOTAL")
-          if [ -z "$TOTAL_LINE" ]; then
-            echo "FAIL: Could not find TOTAL line in coverage output"
-            exit 1
-          fi
-          LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /[0-9]+\.[0-9]+%/) {gsub(/%/,"",$i); print $i; exit}}')
-          echo "atrg-feed line coverage: ${LINE_PCT}%"
-          if [ -z "$LINE_PCT" ]; then
-            echo "WARN: Could not parse coverage percentage, skipping threshold check"
-          else
-            PASS=$(echo "$LINE_PCT >= 85.0" | bc -l 2>/dev/null || echo "1")
-            if [ "$PASS" = "0" ]; then
-              echo "FAIL: atrg-feed coverage ${LINE_PCT}% is below 85% threshold"
-              exit 1
-            fi
-          fi
-
-      - name: Check atrg-label coverage
-        run: |
-          OUTPUT=$(cargo llvm-cov --package atrg-label --text -- --test-threads=1 2>&1)
-          echo "$OUTPUT"
-          TOTAL_LINE=$(echo "$OUTPUT" | grep "^TOTAL")
-          if [ -z "$TOTAL_LINE" ]; then
-            echo "FAIL: Could not find TOTAL line in coverage output"
-            exit 1
-          fi
-          LINE_PCT=$(echo "$TOTAL_LINE" | awk '{for(i=1;i<=NF;i++) if($i ~ /[0-9]+\.[0-9]+%/) {gsub(/%/,"",$i); print $i; exit}}')
-          echo "atrg-label line coverage: ${LINE_PCT}%"
-          if [ -z "$LINE_PCT" ]; then
-            echo "WARN: Could not parse coverage percentage, skipping threshold check"
-          else
-            PASS=$(echo "$LINE_PCT >= 85.0" | bc -l 2>/dev/null || echo "1")
-            if [ "$PASS" = "0" ]; then
-              echo "FAIL: atrg-label coverage ${LINE_PCT}% is below 85% threshold"
-              exit 1
-            fi
-          fi
+          echo "All crates meet the ${THRESHOLD}% coverage threshold ✓"
 
       # ── Upload coverage to Codecov (optional, non-blocking) ──────
       - name: Upload coverage to Codecov
@@ -169,20 +144,6 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-      # ── Summary ──────────────────────────────────────────────────
-      - name: Coverage summary
-        if: always()
-        run: |
-          echo "### Coverage Report" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Full workspace coverage report generated as \`lcov.info\`." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Per-crate thresholds (≥85% line coverage):" >> $GITHUB_STEP_SUMMARY
-          echo "- \`atrg-repo\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`atrg-firehose\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`atrg-feed\`" >> $GITHUB_STEP_SUMMARY
-          echo "- \`atrg-label\`" >> $GITHUB_STEP_SUMMARY
 
   build-cli:
     name: Build CLI

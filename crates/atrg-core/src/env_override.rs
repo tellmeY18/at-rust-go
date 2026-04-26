@@ -1,6 +1,6 @@
 //! Environment variable overrides for `atrg.toml` configuration.
 //!
-//! Any field in [`Config`](crate::config::Config) can be overridden at runtime
+//! Any field in [`Config`] can be overridden at runtime
 //! via an environment variable. The naming convention uses a double-underscore
 //! (`__`) to separate the section from the field:
 //!
