@@ -88,7 +88,7 @@ pub async fn run_user_migrations(
 
     let has_sql_files = std::fs::read_dir(dir)?
         .filter_map(|entry| entry.ok())
-        .any(|entry| entry.path().extension().map_or(false, |ext| ext == "sql"));
+        .any(|entry| entry.path().extension().is_some_and(|ext| ext == "sql"));
 
     if !has_sql_files {
         tracing::debug!(
