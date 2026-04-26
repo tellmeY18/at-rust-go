@@ -1,0 +1,214 @@
+# at-rust-go (atrg)
+
+> Batteries-included Rust backend framework for AT Protocol applications. API-only / headless — returns JSON, bring your own frontend.
+
+Docs: https://github.com/tellmeY18/at-rust-go
+Repository: https://github.com/tellmeY18/at-rust-go
+License: LGPL-3.0-only
+Version: 0.1.1
+
+## Quick Start
+
+```bash
+cargo install atrg-cli
+atrg new my-app
+cd my-app
+atrg dev
+# Server running at http://localhost:3000/ — all responses are JSON
+```
+
+## Crates
+
+- [atrg-core](https://crates.io/crates/atrg-core): AppState, Config, AtrgApp builder, error types, CORS, rate limiting, graceful shutdown
+- [atrg-auth](https://crates.io/crates/atrg-auth): OAuth login/logout/session, AT Protocol JWT verification, AuthUser/RequireAuth extractors
+- [atrg-db](https://crates.io/crates/atrg-db): SQLite connection pool (sqlx) and migration runner
+- [atrg-xrpc](https://crates.io/crates/atrg-xrpc): XRPC route helpers and AT Protocol error envelope
+- [atrg-identity](https://crates.io/crates/atrg-identity): DID/handle resolution with TTL-backed moka cache
+- [atrg-stream](https://crates.io/crates/atrg-stream): Jetstream WebSocket consumer with bounded backpressure
+- [atrg-firehose](https://crates.io/crates/atrg-firehose): Full relay firehose (com.atproto.sync.subscribeRepos) with CAR decoding
+- [atrg-repo](https://crates.io/crates/atrg-repo): Record CRUD, blob uploads, AT-URI parsing, TID generation
+- [atrg-feed](https://crates.io/crates/atrg-feed): Feed generator framework (describeFeedGenerator + getFeedSkeleton)
+- [atrg-label](https://crates.io/crates/atrg-label): Labeler framework — create, sign, store, and stream labels
+- [atrg-codegen](https://crates.io/crates/atrg-codegen): Lexicon JSON → Rust types and XRPC route stubs code generator
+- [atrg-testing](https://crates.io/crates/atrg-testing): Test utilities — mock client, fake Jetstream, in-memory test state
+- [atrg-cli](https://crates.io/crates/atrg-cli): CLI binary — atrg new, dev, migrate, routes, build, generate
+
+## Documentation
+
+- [Getting Started](https://github.com/tellmeY18/at-rust-go/blob/main/docs/getting-started.md): Install CLI, scaffold project, run dev server
+- [OAuth & Auth](https://github.com/tellmeY18/at-rust-go/blob/main/docs/oauth.md): Two-token auth model, login flow, extractors, JWT verification
+- [Jetstream](https://github.com/tellmeY18/at-rust-go/blob/main/docs/jetstream.md): Real-time event ingestion, backpressure, ZSTD dictionary
+- [XRPC](https://github.com/tellmeY18/at-rust-go/blob/main/docs/xrpc.md): AT Protocol procedure routes, error envelope, auth integration
+- [Codegen](https://github.com/tellmeY18/at-rust-go/blob/main/docs/codegen.md): Generate Rust code from lexicon JSON files
+- [Testing](https://github.com/tellmeY18/at-rust-go/blob/main/docs/testing.md): Mock clients, fake streams, in-memory SQLite test helpers
+- [Full API Reference (llms-full.txt)](https://tellmeY18.github.io/at-rust-go/llms-full.txt): Complete type signatures, config schema, and usage patterns
+
+## Architecture
+
+atrg is an Axum-based JSON API server. No HTML, no templates, no static files.
+
+```
+AtrgApp::new()                    // App builder
+    .with_auth_routes(router)     // OAuth login/callback/logout
+    .mount(my_routes())           // Your JSON API handlers
+    .with_feed_generator(router)  // Optional: feed generator XRPC routes
+    .with_labeler(router)         // Optional: labeler XRPC routes
+    .on_event(handler)            // Optional: Jetstream event handler
+    .on_firehose_event(handler)   // Optional: full firehose handler
+    .run()                        // Boot server
+    .await
+```
+
+AppState is shared across all handlers:
+- `config: Arc<Config>` — parsed from atrg.toml
+- `db: SqlitePool` — SQLite connection pool
+- `http: reqwest::Client` — shared HTTP client
+- `identity: Arc<IdentityResolver>` — DID/handle resolver with cache
+
+## Config (atrg.toml)
+
+```toml
+[app]
+name = "my-app"
+host = "127.0.0.1"
+port = 3000
+secret_key = "your-secret-key-min-32-chars"
+cors_origins = ["http://localhost:5173"]
+environment = "development"  # or "production"
+
+[auth]
+client_id = "http://localhost:3000/client-metadata.json"
+redirect_uri = "http://localhost:3000/auth/callback"
+scope = "atproto transition:generic"
+
+[database]
+url = "sqlite://atrg.db"
+
+# [jetstream]
+# host = "jetstream1.us-east.bsky.network"
+# collections = ["app.bsky.feed.post"]
+
+# [firehose]
+# relay = "wss://bsky.network"
+
+# [feed_generator]
+# did = "did:web:feeds.example.com"
+
+# [labeler]
+# did = "did:web:labels.example.com"
+# signing_key_path = "keys/labeler.pem"
+
+# [rate_limit]
+# requests_per_second = 10.0
+# burst = 50
+# enabled = true
+```
+
+Every field is overridable via ATRG_ prefixed env vars (e.g. ATRG_APP__PORT=8080).
+
+## Key Patterns
+
+### Handler with auth
+```rust
+use atrg_auth::{AuthUser, RequireAuth};
+use atrg_core::AppState;
+use axum::{extract::State, Json};
+
+async fn public(AuthUser(user): AuthUser) -> Json<serde_json::Value> {
+    match user {
+        Some(u) => Json(serde_json::json!({"did": u.did})),
+        None => Json(serde_json::json!({"authenticated": false})),
+    }
+}
+
+async fn private(RequireAuth(user): RequireAuth) -> Json<serde_json::Value> {
+    Json(serde_json::json!({"did": user.did, "handle": user.handle}))
+}
+```
+
+### XRPC endpoint
+```rust
+use atrg_xrpc::{xrpc_router, XrpcError, xrpc_not_found};
+
+pub fn routes() -> Router<AppState> {
+    xrpc_router()
+        .route("/xrpc/com.example.getPost", get(get_post))
+}
+
+async fn get_post() -> Result<Json<Value>, XrpcError> {
+    Err(xrpc_not_found("post not found"))
+    // Returns: {"error":"NotFound","message":"post not found"} with 404
+}
+```
+
+### Feed generator
+```rust
+use atrg_feed::{FeedGenerator, FeedRequest, FeedSkeleton, SkeletonItem};
+use atrg_xrpc::XrpcError;
+
+let feeds = FeedGenerator::new("did:web:feeds.example.com")
+    .feed("my-feed", "My Feed", None, my_handler)
+    .into_router();
+
+async fn my_handler(req: FeedRequest, state: AppState) -> Result<FeedSkeleton, XrpcError> {
+    Ok(FeedSkeleton {
+        feed: vec![SkeletonItem::new("at://did:plc:abc/app.bsky.feed.post/123")],
+        cursor: None,
+    })
+}
+```
+
+### Record operations
+```rust
+use atrg_repo::{Repo, AtUri, Tid};
+
+let repo = Repo::new(&state.http, "https://pds.example.com", &token, &did);
+let record = serde_json::json!({"text": "Hello"});
+let strong_ref = repo.create_record("app.bsky.feed.post", &record).await?;
+let uri = AtUri::parse("at://did:plc:abc/app.bsky.feed.post/rkey")?;
+let post: Record<Value> = repo.get_record(&uri).await?;
+```
+
+### Jetstream events
+```rust
+AtrgApp::new()
+    .on_event(|event, state| async move {
+        if let Some(commit) = &event.commit {
+            if commit.collection == "app.bsky.feed.post" {
+                // Index the post into your database
+            }
+        }
+        Ok(())
+    })
+    .run().await
+```
+
+### Labeler
+```rust
+use atrg_label::{LabelService, LabelValue};
+
+let service = LabelService::new(db, signer, "did:web:labels.example.com".into());
+service.migrate().await?;
+let label = service.create_label("at://did:plc:abc", LabelValue::Spam, None).await?;
+```
+
+## What atrg Does NOT Do
+
+- No frontend (no HTML, no templates, no static files, no JS bundling)
+- No ORM (write SQL with sqlx::query!)
+- No bundled lexicons (bring your own .json lexicon files)
+- No PDS implementation (builds apps on top of the network)
+- No multi-tenancy (single-app deployments)
+
+## Built-in Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| /healthz | GET | Health check (always 200) |
+| /readyz | GET | Readiness probe (checks DB) |
+| /auth/login | GET | Start OAuth flow (?handle=...) |
+| /auth/callback | GET | OAuth callback |
+| /auth/logout | POST | Destroy session |
+| /auth/session | GET | Current user (or 401) |
+| /client-metadata.json | GET | OAuth client metadata |
+| /.well-known/oauth-protected-resource | GET | OAuth resource metadata |

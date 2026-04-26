@@ -1,0 +1,985 @@
+# atrg — Complete API Reference for AI Agents
+
+> Single-document reference for building AT Protocol apps with the atrg framework.
+> Every type, every method signature, every config field.
+
+---
+
+## atrg-core
+
+### AppState
+
+Shared state passed to every Axum handler via `State<AppState>`. Cheaply cloneable.
+
+```rust
+#[derive(Clone)]
+pub struct AppState {
+    pub config: Arc<Config>,              // Parsed atrg.toml
+    pub db: SqlitePool,                   // SQLite connection pool
+    pub http: reqwest::Client,            // Shared outbound HTTP client
+    pub identity: Arc<IdentityResolver>,  // DID/handle resolver with cache
+}
+```
+
+FromRef implementations: `SqlitePool`, `Arc<Config>`, `Arc<IdentityResolver>`.
+Implements: Send, Sync, Clone.
+
+### Config (atrg.toml)
+
+```rust
+pub struct Config {
+    pub app: AppConfig,                          // [app] — required
+    pub auth: AuthConfig,                        // [auth] — optional, has defaults
+    pub database: DatabaseConfig,                // [database] — optional, has defaults
+    pub jetstream: Option<JetstreamConfig>,      // [jetstream] — optional
+    pub firehose: Option<FirehoseConfig>,        // [firehose] — optional
+    pub feed_generator: Option<FeedGeneratorConfig>, // [feed_generator] — optional
+    pub labeler: Option<LabelerConfig>,          // [labeler] — optional
+    pub rate_limit: Option<RateLimitTomlConfig>, // [rate_limit] — optional
+}
+
+impl Config {
+    pub fn load() -> anyhow::Result<Self>;              // Load from ./atrg.toml
+    pub fn parse_toml(toml_str: &str) -> anyhow::Result<Self>; // Parse from string
+}
+```
+
+#### AppConfig — `[app]`
+
+```rust
+pub struct AppConfig {
+    pub name: String,               // Required. Must be non-empty.
+    pub host: String,               // Default: "127.0.0.1"
+    pub port: u16,                  // Default: 3000
+    pub secret_key: String,         // Required. ≥32 chars recommended for production.
+    pub cors_origins: Vec<String>,  // Default: []. "*" for wildcard.
+    pub environment: String,        // Default: "development". Also: "production".
+}
+```
+
+#### AuthConfig — `[auth]`
+
+```rust
+pub struct AuthConfig {
+    pub client_id: String,      // Default: "http://localhost:3000/client-metadata.json"
+    pub redirect_uri: String,   // Default: "http://localhost:3000/auth/callback"
+    pub scope: String,          // Default: "atproto transition:generic"
+}
+```
+
+Validation: `client_id` and `redirect_uri` must be valid URLs.
+
+#### DatabaseConfig — `[database]`
+
+```rust
+pub struct DatabaseConfig {
+    pub url: String,  // Default: "sqlite://atrg.db"
+}
+```
+
+#### JetstreamConfig — `[jetstream]`
+
+```rust
+pub struct JetstreamConfig {
+    pub host: String,               // Required. e.g. "jetstream1.us-east.bsky.network"
+    pub collections: Vec<String>,   // Required. e.g. ["app.bsky.feed.post"]
+    pub zstd_dict: Option<String>,  // Path or URL to ZSTD dictionary
+    pub channel_capacity: usize,    // Default: 1024
+    pub max_lag_events: usize,      // Default: 10_000
+}
+```
+
+#### FirehoseConfig — `[firehose]`
+
+```rust
+pub struct FirehoseConfig {
+    pub relay: String,              // Required. e.g. "wss://bsky.network"
+    pub cursor: Option<i64>,        // Resume sequence number. None = head.
+    pub channel_capacity: usize,    // Default: 1024
+}
+```
+
+#### FeedGeneratorConfig — `[feed_generator]`
+
+```rust
+pub struct FeedGeneratorConfig {
+    pub did: String,  // DID of feed generator service, e.g. "did:web:feeds.example.com"
+}
+```
+
+#### LabelerConfig — `[labeler]`
+
+```rust
+pub struct LabelerConfig {
+    pub did: String,                        // DID of labeler service
+    pub signing_key_path: Option<String>,   // Path to PEM signing key file
+    pub signing_key_base64: Option<String>, // Inline base64-encoded signing key
+}
+```
+
+#### RateLimitTomlConfig — `[rate_limit]`
+
+```rust
+pub struct RateLimitTomlConfig {
+    pub requests_per_second: f64,  // Default: 10.0
+    pub burst: u32,                // Default: 50
+    pub enabled: bool,             // Default: true
+}
+```
+
+### AtrgApp Builder
+
+```rust
+pub struct AtrgApp { /* internal */ }
+
+impl AtrgApp {
+    pub fn new() -> Self;
+    pub fn mount(self, router: Router<AppState>) -> Self;
+    pub fn with_auth_routes(self, router: Router<AppState>) -> Self;
+    pub fn with_cleanup_task<F: FnOnce(SqlitePool) + Send + 'static>(self, f: F) -> Self;
+    pub fn on_event<F, Fut>(self, handler: F) -> Self
+    where
+        F: Fn(JetstreamEvent, AppState) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = anyhow::Result<()>> + Send + 'static;
+    pub fn on_firehose_event<F, Fut>(self, handler: F) -> Self  // requires "firehose" feature
+    where
+        F: Fn(FirehoseEvent, AppState) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = anyhow::Result<()>> + Send + 'static;
+    pub fn with_feed_generator(self, feed_router: Router<AppState>) -> Self; // alias for mount
+    pub fn with_labeler(self, labeler_router: Router<AppState>) -> Self;     // alias for mount
+    pub async fn run(self) -> anyhow::Result<()>;
+}
+
+impl Default for AtrgApp { fn default() -> Self { Self::new() } }
+```
+
+`run()` sequence: init tracing → load atrg.toml → connect SQLite → run internal
+migrations → run user migrations → build AppState → build CORS → mount auth routes
+→ mount user routes → add fallback 404 → spawn Jetstream consumer (if configured)
+→ spawn firehose consumer (if configured) → spawn cleanup task → bind TCP → serve
+with graceful shutdown.
+
+### AtrgError
+
+```rust
+pub type AtrgResult<T> = Result<T, AtrgError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum AtrgError {
+    Database(#[from] sqlx::Error),  // 500 — "database_error"
+    Auth(String),                    // 401 — "unauthorized"
+    NotFound,                        // 404 — "not_found"
+    BadRequest(String),              // 400 — "bad_request"
+    Internal(anyhow::Error),         // 500 — "internal_error"
+}
+
+impl From<anyhow::Error> for AtrgError;
+impl IntoResponse for AtrgError;  // JSON: {"error": "<code>", "message": "<msg>"}
+```
+
+### Pagination
+
+```rust
+pub const MAX_LIMIT: u32 = 100;
+pub const DEFAULT_LIMIT: u32 = 50;
+
+#[derive(Debug, Deserialize)]
+pub struct PaginationParams {
+    pub cursor: Option<String>,
+    pub limit: Option<u32>,
+}
+
+impl PaginationParams {
+    pub fn effective_limit(&self) -> u32;  // Clamped to [1, 100], default 50
+}
+
+pub fn encode_cursor(timestamp_ms: i64, rkey: &str) -> String;
+pub fn decode_cursor(cursor: &str) -> Result<(i64, String), AtrgError>;
+pub fn paginated_response<T: Serialize>(items: Vec<T>, cursor: Option<String>) -> serde_json::Value;
+// Returns: {"items": [...], "cursor": "..."|null}
+```
+
+### Rate Limiting
+
+```rust
+#[derive(Debug, Clone)]
+pub struct RateLimitConfig {
+    pub requests_per_second: f64,  // Default: 10.0
+    pub burst: u32,                // Default: 50
+    pub enabled: bool,             // Default: true
+}
+
+#[derive(Clone)]
+pub struct RateLimiter { /* internal */ }
+
+impl RateLimiter {
+    pub fn new(config: RateLimitConfig) -> Self;
+    pub async fn check(&self, ip: IpAddr) -> Result<(), f64>;  // Err = retry_after seconds
+    pub async fn cleanup(&self, max_age: Duration);
+}
+
+pub fn rate_limit_response(retry_after_secs: f64) -> Response<Body>;  // 429 + Retry-After header
+```
+
+### Shutdown
+
+```rust
+pub async fn shutdown_signal();  // Resolves on SIGINT or SIGTERM
+pub async fn shutdown_cleanup(db: &SqlitePool, timeout: Option<Duration>);  // Default 30s timeout
+```
+
+---
+
+## atrg-auth
+
+### AtrgSession
+
+```rust
+#[derive(Debug, Clone)]
+pub struct AtrgSession {
+    pub did: String,                    // e.g. "did:plc:..."
+    pub handle: String,                 // e.g. "alice.bsky.social"
+    pub access_token: String,           // For outbound AT Protocol calls
+    pub refresh_token: Option<String>,  // Only for atrg sessions
+    pub expires_at: i64,                // Unix timestamp
+    pub source: AuthSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthSource {
+    Atrg,         // atrg session token (cookie or bearer)
+    AtprotoJwt,   // PDS-issued JWT in Authorization header
+}
+```
+
+### Session Functions
+
+```rust
+pub fn generate_session_id() -> String;  // 32 random bytes, base64url
+pub async fn find_session(pool: &SqlitePool, session_id: &str) -> anyhow::Result<Option<AtrgSession>>;
+pub async fn create_session(pool: &SqlitePool, session_id: &str, did: &str, handle: &str, access_token: &str, refresh_token: Option<&str>, expires_at: i64) -> anyhow::Result<()>;
+pub async fn delete_session(pool: &SqlitePool, session_id: &str) -> anyhow::Result<()>;
+pub async fn cleanup_expired_sessions(pool: &SqlitePool) -> anyhow::Result<u64>;
+pub async fn cleanup_expired_oauth_states(pool: &SqlitePool) -> anyhow::Result<u64>;
+```
+
+### Extractors
+
+```rust
+/// Optional auth — returns None if unauthenticated, never rejects.
+pub struct AuthUser(pub Option<AtrgSession>);
+
+/// Strict auth — rejects with 401 JSON if unauthenticated.
+pub struct RequireAuth(pub AtrgSession);
+```
+
+Resolution priority:
+1. `Authorization: Bearer <token>` — try as JWT first, then as session ID
+2. `Cookie: atrg_session=<id>` — look up as session ID
+
+Usage:
+```rust
+async fn handler(AuthUser(user): AuthUser) -> impl IntoResponse { ... }
+async fn handler(RequireAuth(session): RequireAuth) -> impl IntoResponse { ... }
+```
+
+### Auth Routes (auto-mounted)
+
+- `GET /auth/login?handle=<handle>` — start OAuth flow
+- `GET /auth/callback` — OAuth callback
+- `POST /auth/logout` — destroy session
+- `GET /auth/session` — return current user JSON or 401
+- `GET /client-metadata.json` — OAuth client metadata
+- `GET /.well-known/oauth-protected-resource` — OAuth resource metadata
+
+---
+
+## atrg-xrpc
+
+### XrpcError
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum XrpcErrorName {
+    InvalidRequest,       // 400
+    AuthRequired,         // 401
+    Forbidden,            // 403
+    NotFound,             // 404
+    RateLimitExceeded,    // 429
+    InternalServerError,  // 500
+    MethodNotImplemented, // 501
+}
+
+impl XrpcErrorName {
+    pub fn as_str(&self) -> &'static str;
+    pub fn status_code(&self) -> StatusCode;
+}
+
+#[derive(Debug)]
+pub struct XrpcError {
+    pub name: XrpcErrorName,
+    pub message: String,
+}
+
+impl Display for XrpcError;
+impl Error for XrpcError;
+impl IntoResponse for XrpcError;     // JSON: {"error": "<Name>", "message": "..."}
+impl From<AtrgError> for XrpcError;  // Maps AtrgError variants to XRPC equivalents
+```
+
+### XRPC Router Factory
+
+```rust
+pub fn xrpc_router<S: Clone + Send + Sync + 'static>() -> Router<S>;
+// Pre-configured with 501 MethodNotImplemented fallback.
+```
+
+Usage:
+```rust
+pub fn routes() -> Router<AppState> {
+    atrg_xrpc::xrpc_router()
+        .route("/xrpc/com.example.getPosts", get(get_posts))
+        .route("/xrpc/com.example.createPost", post(create_post))
+}
+```
+
+---
+
+## atrg-repo
+
+### Repo Client
+
+```rust
+pub struct Repo { /* http, pds_endpoint, access_token, did */ }
+
+impl Repo {
+    pub fn new(http: &reqwest::Client, pds_endpoint: &str, access_token: &str, did: &str) -> Self;
+    pub fn from_session(http: &reqwest::Client, session: &AtrgSession, pds_endpoint: &str) -> Self;
+    pub fn did(&self) -> &str;
+    pub fn pds_endpoint(&self) -> &str;
+    pub async fn get_record<T: DeserializeOwned>(&self, uri: &AtUri) -> Result<Record<T>, RepoError>;
+    pub async fn list_records<T: DeserializeOwned>(&self, collection: &str, cursor: Option<&str>, limit: Option<usize>) -> Result<Page<Record<T>>, RepoError>;
+    pub async fn create_record(&self, collection: &str, record: &serde_json::Value) -> Result<StrongRef, RepoError>;
+    pub async fn put_record(&self, collection: &str, rkey: &str, record: &serde_json::Value) -> Result<StrongRef, RepoError>;
+    pub async fn delete_record(&self, uri: &AtUri) -> Result<(), RepoError>;
+    pub async fn upload_blob(&self, data: Vec<u8>, mime_type: &str) -> Result<BlobRef, RepoError>;
+    pub fn new_tid() -> Tid;
+}
+```
+
+### AtUri
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AtUri {
+    pub authority: String,   // DID, must start with "did:"
+    pub collection: String,  // NSID, must contain "."
+    pub rkey: String,        // Non-empty record key
+}
+
+impl AtUri {
+    pub fn new(authority: impl Into<String>, collection: impl Into<String>, rkey: impl Into<String>) -> Result<Self, RepoError>;
+    pub fn parse(uri: &str) -> Result<Self, RepoError>;  // "at://did:plc:abc/col.name/rkey"
+}
+
+impl Display for AtUri;  // "at://{authority}/{collection}/{rkey}"
+```
+
+### Tid
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Tid(String);  // 13-char base32-sortable string
+
+impl Tid {
+    pub fn now() -> Self;                            // Generate from current timestamp + random clock ID
+    pub fn parse(s: &str) -> Result<Self, RepoError>; // Validate 13-char base32-sortable
+    pub fn as_str(&self) -> &str;
+    pub fn into_string(self) -> String;
+}
+
+impl Display for Tid;
+impl Serialize for Tid;
+impl Deserialize<'de> for Tid;
+```
+
+Charset: `234567abcdefghijklmnopqrstuvwxyz` (32 chars). Encodes microsecond
+timestamp (upper 54 bits) + random clock ID (lower 10 bits).
+
+### Types
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrongRef {
+    pub uri: String,  // AT-URI
+    pub cid: String,  // Content identifier hash
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobRef {
+    #[serde(rename = "$type")]
+    pub blob_type: String,      // Always "blob"
+    #[serde(rename = "ref")]
+    pub reference: BlobLink,    // CID link
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,      // e.g. "image/png"
+    pub size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlobLink {
+    #[serde(rename = "$link")]
+    pub link: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Page<T> {
+    pub records: Vec<T>,
+    pub cursor: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Record<T> {
+    pub uri: String,
+    pub cid: String,
+    pub value: T,
+}
+```
+
+---
+
+## atrg-feed
+
+### FeedGenerator Builder
+
+```rust
+pub struct FeedGenerator { /* did, feeds map */ }
+
+impl FeedGenerator {
+    pub fn new(did: impl Into<String>) -> Self;
+    pub fn feed<F, Fut>(self, id: &str, display_name: &str, description: Option<&str>, handler: F) -> Self
+    where
+        F: Fn(FeedRequest, AppState) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<FeedSkeleton, XrpcError>> + Send + 'static;
+    pub fn feed_with_config<F, Fut>(self, config: FeedConfig, handler: F) -> Self
+    where
+        F: Fn(FeedRequest, AppState) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<FeedSkeleton, XrpcError>> + Send + 'static;
+    pub fn did(&self) -> &str;
+    pub fn feed_count(&self) -> usize;
+    pub fn into_router(self) -> Router<AppState>;
+    // Registers: GET /xrpc/app.bsky.feed.describeFeedGenerator
+    //            GET /xrpc/app.bsky.feed.getFeedSkeleton
+}
+```
+
+### FeedHandler & FeedRequest
+
+```rust
+#[derive(Debug, Clone)]
+pub struct FeedRequest {
+    pub feed: String,                  // Full AT-URI of the requested feed
+    pub cursor: Option<String>,        // Pagination cursor
+    pub limit: usize,                  // Clamped to 1..=100
+    pub requester_did: Option<String>, // Authenticated user's DID
+}
+
+pub type FeedHandler = Arc<dyn Fn(FeedRequest, AppState) -> Pin<Box<dyn Future<Output = Result<FeedSkeleton, XrpcError>> + Send>> + Send + Sync>;
+```
+
+### Feed Types
+
+```rust
+#[derive(Debug, Clone, Deserialize)]
+pub struct FeedConfig {
+    pub id: String,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub avatar: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedSkeleton {
+    pub feed: Vec<SkeletonItem>,
+    pub cursor: Option<String>,      // skip_serializing_if None
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkeletonItem {
+    pub post: String,  // AT-URI of the post
+}
+
+impl SkeletonItem {
+    pub fn new(post_uri: impl Into<String>) -> Self;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeedDescription {
+    pub uri: String,
+    pub cid: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DescribeFeedGeneratorResponse {
+    pub did: String,
+    pub feeds: Vec<FeedDescription>,
+}
+```
+
+### Feed Generator Usage Pattern
+
+```rust
+let feeds = FeedGenerator::new("did:web:feeds.example.com")
+    .feed("chronological", "Latest Posts", Some("Chronological feed"), |req, state| async move {
+        let posts = sqlx::query_as!(...)
+            .fetch_all(&state.db).await.map_err(|_| XrpcError { ... })?;
+        Ok(FeedSkeleton {
+            feed: posts.into_iter().map(|p| SkeletonItem::new(p.uri)).collect(),
+            cursor: None,
+        })
+    })
+    .into_router();
+
+AtrgApp::new()
+    .with_feed_generator(feeds)
+    .run().await
+```
+
+---
+
+## atrg-label
+
+### LabelService
+
+```rust
+pub struct LabelService { /* store, signer, labeler_did */ }
+
+impl LabelService {
+    pub fn new(db: SqlitePool, signer: LabelSigner, labeler_did: String) -> Self;
+    pub async fn migrate(&self) -> anyhow::Result<()>;
+    pub async fn create_label(&self, subject_uri: &str, value: LabelValue, subject_cid: Option<&str>) -> anyhow::Result<SignedLabel>;
+    pub async fn negate_label(&self, subject_uri: &str, value: LabelValue, subject_cid: Option<&str>) -> anyhow::Result<SignedLabel>;
+    pub async fn query_labels(&self, uri: &str) -> anyhow::Result<Vec<SignedLabel>>;
+    pub async fn query_since(&self, cursor: i64, limit: i64) -> anyhow::Result<Vec<(i64, SignedLabel)>>;
+}
+```
+
+### Label Types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Label {
+    pub ver: i32,               // Default: 1
+    pub src: String,            // Labeler DID
+    pub uri: String,            // Subject AT-URI
+    pub cid: Option<String>,    // Subject CID (specific version)
+    pub val: String,            // Label value string
+    pub neg: bool,              // Default: false. True = negation/removal.
+    pub cts: String,            // Created timestamp (ISO 8601)
+    pub exp: Option<String>,    // Expiration timestamp
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SignedLabel {
+    #[serde(flatten)]
+    pub label: Label,
+    pub sig: String,            // Base64-encoded signature
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LabelValue {
+    Porn,              // "porn"
+    Sexual,            // "sexual"
+    Nudity,            // "nudity"
+    GraphicMedia,      // "graphic-media"
+    Spam,              // "spam"
+    Impersonation,     // "impersonation"
+    Custom(String),    // Any custom string
+}
+
+impl LabelValue {
+    pub fn as_str(&self) -> &str;
+}
+
+impl Display for LabelValue;
+```
+
+---
+
+## atrg-identity
+
+### IdentityResolver
+
+```rust
+pub struct IdentityResolver { /* cache, http, plc_directory, hits, misses */ }
+
+impl IdentityResolver {
+    pub fn new(config: &IdentityConfig, http: reqwest::Client) -> Self;
+    pub fn with_defaults(http: reqwest::Client) -> Self;
+    pub async fn resolve(&self, subject: &str) -> anyhow::Result<ResolvedIdentity>;
+    // subject: DID ("did:plc:...") or handle ("alice.bsky.social")
+    pub async fn invalidate(&self, subject: &str);
+    pub fn metrics(&self) -> IdentityMetrics;
+}
+```
+
+### Identity Types
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolvedIdentity {
+    pub did: String,
+    pub handle: String,
+    pub pds_endpoint: Option<String>,
+    pub did_document: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IdentityMetrics {
+    pub hits: u64,
+    pub misses: u64,
+    pub entry_count: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct IdentityConfig {
+    pub cache_capacity: u64,    // Default: 10_000
+    pub cache_ttl_secs: u64,    // Default: 3600
+    pub plc_directory: String,  // Default: "https://plc.directory"
+}
+```
+
+---
+
+## atrg-stream (Jetstream)
+
+### StreamConfig
+
+```rust
+#[derive(Debug, Clone)]
+pub struct StreamConfig {
+    pub host: String,
+    pub collections: Vec<String>,
+    pub zstd_dict: Option<String>,
+    pub channel_capacity: usize,
+    pub max_lag_events: usize,
+}
+```
+
+### EventHandler
+
+```rust
+pub type EventHandler<S> = Arc<dyn Fn(JetstreamEvent, S) -> BoxFuture<'static, anyhow::Result<()>> + Send + Sync>;
+
+pub async fn spawn_consumer<S: Clone + Send + Sync + 'static>(config: StreamConfig, state: S, handler: EventHandler<S>) -> anyhow::Result<JoinHandle<()>>;
+```
+
+### JetstreamEvent
+
+```rust
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JetstreamEvent {
+    pub did: String,                         // Account DID
+    pub time_us: i64,                        // Unix microseconds (default: 0)
+    pub kind: String,                        // "commit", "identity", "account" (default: "")
+    pub commit: Option<CommitData>,
+    pub identity: Option<serde_json::Value>,
+    pub account: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommitData {
+    pub collection: String,                  // NSID e.g. "app.bsky.feed.post"
+    pub rkey: String,                        // Record key
+    pub operation: String,                   // "create", "update", "delete" (default: "")
+    pub record: Option<serde_json::Value>,   // Present for create/update
+    pub cid: Option<String>,
+    pub rev: Option<String>,
+}
+```
+
+### Jetstream Usage Pattern
+
+```rust
+AtrgApp::new()
+    .on_event(|event: JetstreamEvent, state: AppState| async move {
+        if let Some(commit) = &event.commit {
+            if commit.collection == "app.bsky.feed.post" && commit.operation == "create" {
+                // index the post in your DB
+            }
+        }
+        Ok(())
+    })
+    .run().await
+```
+
+---
+
+## atrg-firehose (Relay)
+
+Requires `firehose` feature flag.
+
+### FirehoseConfig
+
+```rust
+#[derive(Debug, Clone)]
+pub struct FirehoseConfig {
+    pub relay: String,              // Default: "wss://bsky.network"
+    pub cursor: Option<i64>,        // None = start from head
+    pub channel_capacity: usize,    // Default: 1024
+}
+```
+
+### FirehoseHandler
+
+```rust
+pub type FirehoseHandler<S> = Arc<dyn Fn(FirehoseEvent, S) -> BoxFuture<'static, anyhow::Result<()>> + Send + Sync>;
+
+pub async fn spawn_firehose<S: Clone + Send + Sync + 'static>(config: FirehoseConfig, state: S, handler: FirehoseHandler<S>) -> anyhow::Result<JoinHandle<()>>;
+```
+
+### FirehoseEvent
+
+```rust
+#[derive(Debug, Clone)]
+pub enum FirehoseEvent {
+    Commit(FirehoseCommit),
+    Handle { seq: i64, did: String, handle: String },
+    Identity { seq: i64, did: String },
+    Tombstone { seq: i64, did: String },
+    Info { name: String, message: Option<String> },
+}
+
+impl FirehoseEvent {
+    pub fn seq(&self) -> Option<i64>;  // None for Info events
+}
+
+#[derive(Debug, Clone)]
+pub struct FirehoseCommit {
+    pub seq: i64,
+    pub repo: String,          // DID
+    pub rev: String,
+    pub ops: Vec<RepoOp>,
+    pub time: String,          // ISO 8601
+}
+
+#[derive(Debug, Clone)]
+pub struct RepoOp {
+    pub action: OpAction,
+    pub path: String,                       // "collection/rkey"
+    pub record: Option<serde_json::Value>,  // Present for Create/Update
+    pub cid: Option<String>,
+}
+
+impl RepoOp {
+    pub fn collection(&self) -> &str;  // First segment of path
+    pub fn rkey(&self) -> &str;        // Second segment of path
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OpAction { Create, Update, Delete }
+
+impl OpAction {
+    pub fn parse(s: &str) -> Option<Self>;  // "create"/"update"/"delete"
+}
+```
+
+---
+
+## atrg-db
+
+```rust
+pub type DbConn = sqlx::SqlitePool;
+
+pub async fn connect(url: &str) -> anyhow::Result<SqlitePool>;
+// create_if_missing, WAL mode, foreign keys, max 8 connections
+
+pub async fn run_internal_migrations(pool: &SqlitePool) -> anyhow::Result<()>;
+// Embedded migrations: atrg_sessions, atrg_oauth_states tables
+
+pub async fn run_user_migrations(pool: &SqlitePool, dir: &Path) -> anyhow::Result<()>;
+// Discovers .sql files in dir. Silent no-op if dir missing or empty.
+```
+
+### Internal Tables
+
+```sql
+-- atrg_sessions
+CREATE TABLE atrg_sessions (
+    id            TEXT PRIMARY KEY,
+    did           TEXT NOT NULL,
+    handle        TEXT NOT NULL,
+    access_token  TEXT NOT NULL,
+    refresh_token TEXT,
+    expires_at    INTEGER NOT NULL,
+    created_at    INTEGER NOT NULL DEFAULT (unixepoch()),
+    last_used_at  INTEGER NOT NULL DEFAULT (unixepoch())
+);
+CREATE INDEX idx_atrg_sessions_did ON atrg_sessions(did);
+CREATE INDEX idx_atrg_sessions_expires_at ON atrg_sessions(expires_at);
+
+-- atrg_oauth_states
+CREATE TABLE atrg_oauth_states (
+    state      TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+    expires_at INTEGER NOT NULL
+);
+```
+
+---
+
+## atrg-codegen
+
+### Code Generation
+
+```rust
+#[derive(Debug, Clone)]
+pub struct GenOptions {
+    pub generate_stubs: bool,   // Default: true
+    pub generate_routes: bool,  // Default: true
+}
+
+#[derive(Debug)]
+pub struct GenReport {
+    pub files_processed: usize,
+    pub types_generated: usize,
+    pub stubs_generated: usize,
+    pub output_files: Vec<String>,
+}
+
+pub fn generate(input_dir: &Path, output_dir: &Path, opts: GenOptions) -> anyhow::Result<GenReport>;
+```
+
+Input: directory of `.json` lexicon files (any namespace).
+Output files in `output_dir/`:
+- `types.rs` — serde-derived structs for records, objects, params, outputs
+- `routes.rs` — `xrpc_routes() -> Router<AppState>` with stub handlers
+- `mod.rs` — re-exports
+
+Type naming: NSID segments joined as PascalCase. e.g. `com.example.feed.post` → `ComExampleFeedPostRecord`.
+
+CLI: `atrg generate <lexicon-dir>`
+
+---
+
+## atrg-cli Commands
+
+```
+atrg new <name>       Scaffold a new project
+atrg dev              Start dev server (cargo-watch)
+atrg migrate          Run pending migrations
+atrg routes           Print registered routes
+atrg build            cargo build --release
+atrg generate <dir>   Generate Rust code from lexicon JSON files
+```
+
+### Scaffold Structure (`atrg new my-app`)
+
+```
+my-app/
+├── Cargo.toml
+├── rust-toolchain.toml
+├── atrg.toml
+├── src/
+│   ├── main.rs
+│   └── routes.rs
+└── migrations/
+    └── .gitkeep
+```
+
+---
+
+## Common Patterns
+
+### Minimal App
+
+```rust
+use atrg_core::AtrgApp;
+mod routes;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    AtrgApp::new()
+        .mount(routes::api())
+        .run()
+        .await
+}
+```
+
+### Authenticated Handler
+
+```rust
+use atrg_auth::RequireAuth;
+use atrg_core::{AppState, error::AtrgResult};
+use axum::{extract::State, Json};
+
+async fn me(State(state): State<AppState>, RequireAuth(user): RequireAuth) -> AtrgResult<Json<serde_json::Value>> {
+    Ok(Json(serde_json::json!({"did": user.did, "handle": user.handle})))
+}
+```
+
+### XRPC Handler
+
+```rust
+use atrg_xrpc::{XrpcError, XrpcErrorName};
+
+async fn get_posts(State(state): State<AppState>) -> Result<Json<serde_json::Value>, XrpcError> {
+    let posts = sqlx::query!("SELECT * FROM posts LIMIT 50")
+        .fetch_all(&state.db).await
+        .map_err(|_| XrpcError { name: XrpcErrorName::InternalServerError, message: "db error".into() })?;
+    Ok(Json(serde_json::json!({"posts": posts})))
+}
+```
+
+### Repo Operations
+
+```rust
+use atrg_repo::{Repo, AtUri};
+
+async fn create_post(State(state): State<AppState>, RequireAuth(user): RequireAuth) -> AtrgResult<Json<serde_json::Value>> {
+    let identity = state.identity.resolve(&user.did).await?;
+    let pds = identity.pds_endpoint.ok_or(AtrgError::BadRequest("no PDS".into()))?;
+    let repo = Repo::from_session(&state.http, &user, &pds);
+    let record = serde_json::json!({"$type": "app.bsky.feed.post", "text": "Hello!", "createdAt": "2024-01-01T00:00:00Z"});
+    let strong_ref = repo.create_record("app.bsky.feed.post", &record).await?;
+    Ok(Json(serde_json::json!({"uri": strong_ref.uri, "cid": strong_ref.cid})))
+}
+```
+
+### Feed Generator
+
+```rust
+use atrg_feed::{FeedGenerator, FeedRequest, FeedSkeleton, SkeletonItem};
+
+let feeds = FeedGenerator::new("did:web:feeds.example.com")
+    .feed("latest", "Latest", None, |req: FeedRequest, state: AppState| async move {
+        Ok(FeedSkeleton { feed: vec![SkeletonItem::new("at://did:plc:abc/app.bsky.feed.post/123")], cursor: None })
+    })
+    .into_router();
+
+AtrgApp::new().with_feed_generator(feeds).run().await
+```
+
+### Label Service
+
+```rust
+use atrg_label::{LabelService, LabelValue, signing::LabelSigner};
+
+let signer = LabelSigner::new(signing_key_bytes);
+let service = LabelService::new(state.db.clone(), signer, "did:plc:my-labeler".into());
+service.migrate().await?;
+let signed = service.create_label("at://did:plc:user/app.bsky.feed.post/abc", LabelValue::Spam, None).await?;
+let negated = service.negate_label("at://did:plc:user/app.bsky.feed.post/abc", LabelValue::Spam, None).await?;
+```
+
+---
+
+## JSON Response Conventions
+
+- Success: `200 OK` + JSON body
+- App errors: `{"error": "<code>", "message": "<human readable>"}`
+- XRPC errors: `{"error": "<XrpcErrorName>", "message": "..."}`
+- Pagination: `{"items": [...], "cursor": "<opaque>"|null}`
+- Rate limit: `429` + `Retry-After` header + `{"error": "rate_limit_exceeded", "message": "..."}`
+- Content-Type: always `application/json; charset=utf-8`
+- All CORS, security headers, cookie flags configured via `atrg.toml [app]`
