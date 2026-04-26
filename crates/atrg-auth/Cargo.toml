@@ -1,6 +1,7 @@
 [package]
 name = "atrg-auth"
 description = "OAuth authentication wiring for at-rust-go"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

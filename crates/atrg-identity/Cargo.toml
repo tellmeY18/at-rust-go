@@ -1,6 +1,7 @@
 [package]
 name = "atrg-identity"
 description = "DID/handle resolution and caching for at-rust-go"
+readme = "README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
