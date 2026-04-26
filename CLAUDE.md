@@ -851,7 +851,7 @@ Without `atrg-testing`, business-logic tests would have to mock the entire AT Pr
 - Issues tracker is the primary venue for feature requests.
 - Non-trivial features (anything that touches the public API, adds a crate, or changes auth/XRPC semantics) go through a lightweight `docs/rfcs/NNNN-title.md` proposal before implementation. PRs without an RFC for these categories will be asked to file one.
 - Engagement with the AT Protocol developer community (Discord, GitHub) is expected for maintainers, especially around OAuth and Jetstream behavior changes upstream.
-- License: MIT OR Apache-2.0 (dual). Contributions are accepted under the same dual license.
+- License: LGPL-3.0-only. Contributions are accepted under the same license.
 
 ---
 

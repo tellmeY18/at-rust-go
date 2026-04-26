@@ -41,4 +41,4 @@ Features that touch the public API, add a crate, or change auth/XRPC semantics r
 
 ## License
 
-Contributions are accepted under the MIT OR Apache-2.0 dual license.
+Contributions are accepted under the LGPL-3.0-only license.

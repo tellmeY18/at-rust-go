@@ -38,7 +38,7 @@
 
 ### 0.1 Repository scaffolding
 - [x] Create `Cargo.toml` at the workspace root with `[workspace]`, `resolver = "2"`, and `members = ["crates/*", "examples/*"]`.
-- [x] Add `[workspace.package]` block with shared `version = "0.1.0"`, `edition = "2021"`, `license = "MIT OR Apache-2.0"`, `repository`, `authors`, `rust-version` (set to current stable minus patch).
+- [x] Add `[workspace.package]` block with shared `version = "0.1.0"`, `edition = "2021"`, `license = "LGPL-3.0-only"`, `repository`, `authors`, `rust-version` (set to current stable minus patch).
 - [x] Add `[workspace.dependencies]` block matching the dependency stack in `CLAUDE.md` exactly (versions pinned, no `minijinja`, no `tower-http` `fs` feature).
 - [x] Add `rust-toolchain.toml` pinning `channel = "stable"`, `components = ["rustfmt", "clippy"]`.
 - [x] Add `.gitignore` (target/, *.db, *.db-journal, *.db-wal, *.db-shm, .env, .DS_Store, /coverage).

@@ -283,4 +283,4 @@ atrg (workspace)
 
 ## License
 
-MIT OR Apache-2.0
+LGPL-3.0-only
