@@ -6,9 +6,9 @@
 //! are gated behind cargo features:
 //!
 //! - `sqlite` *(default)* — pulls in the SQLite driver and enables
-//!   [`DbPool::Sqlite`].
+//!   `DbPool::Sqlite`.
 //! - `postgres` *(optional)* — pulls in the PostgreSQL driver and enables
-//!   [`DbPool::Postgres`].
+//!   `DbPool::Postgres`.
 //!
 //! At runtime, [`connect`] inspects the URL scheme (`sqlite://`, `sqlite::memory:`
 //! → SQLite; `postgres://`, `postgresql://` → PostgreSQL) and returns the
@@ -147,9 +147,9 @@ pub type DbConn = DbPool;
 
 /// Connect to a database, choosing the backend from the URL scheme.
 ///
-/// - `sqlite://path` or `sqlite::memory:` → returns [`DbPool::Sqlite`]
+/// - `sqlite://path` or `sqlite::memory:` → returns `DbPool::Sqlite`
 ///   (requires the `sqlite` feature).
-/// - `postgres://...` or `postgresql://...` → returns [`DbPool::Postgres`]
+/// - `postgres://...` or `postgresql://...` → returns `DbPool::Postgres`
 ///   (requires the `postgres` feature).
 ///
 /// SQLite pools are configured with `create_if_missing(true)`, WAL journal

@@ -256,7 +256,8 @@ pub async fn cleanup_expired_oauth_states(pool: &DbPool) -> anyhow::Result<u64> 
     Ok(deleted)
 }
 
-#[cfg(all(test, feature = "sqlite"))]
+#[cfg(test)]
+#[cfg(feature = "sqlite")]
 mod tests {
     use super::*;
 
