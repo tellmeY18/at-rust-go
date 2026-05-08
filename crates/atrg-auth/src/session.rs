@@ -1,7 +1,12 @@
 //! Session types and database operations.
+//!
+//! Implementations are dialect-aware: every CRUD function dispatches on the
+//! [`atrg_db::DbPool`] variant so the same API works against SQLite or
+//! PostgreSQL. Placeholders differ (`?` for SQLite, `$1, $2, ...` for
+//! Postgres) but the SQL shape is otherwise identical.
 
+use atrg_db::DbPool;
 use rand::Rng;
-use sqlx::SqlitePool;
 
 /// The source of authentication credentials.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,114 +52,14 @@ fn base64_url_encode(data: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data)
 }
 
-/// Look up a session by ID, filtering out expired sessions.
-pub async fn find_session(
-    pool: &SqlitePool,
-    session_id: &str,
-) -> anyhow::Result<Option<AtrgSession>> {
-    let now = std::time::SystemTime::now()
+fn now_unix() -> i64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs() as i64;
-
-    let row = sqlx::query_as::<_, SessionRow>(
-        "SELECT id, did, handle, access_token, refresh_token, expires_at
-         FROM atrg_sessions
-         WHERE id = ? AND expires_at > ?",
-    )
-    .bind(session_id)
-    .bind(now)
-    .fetch_optional(pool)
-    .await?;
-
-    // Update last_used_at on access
-    if row.is_some() {
-        let _ = sqlx::query("UPDATE atrg_sessions SET last_used_at = unixepoch() WHERE id = ?")
-            .bind(session_id)
-            .execute(pool)
-            .await;
-    }
-
-    Ok(row.map(|r| AtrgSession {
-        did: r.did,
-        handle: r.handle,
-        access_token: r.access_token,
-        refresh_token: r.refresh_token,
-        expires_at: r.expires_at,
-        source: AuthSource::Atrg,
-    }))
+        .as_secs() as i64
 }
 
-/// Insert a new session into the database.
-pub async fn create_session(
-    pool: &SqlitePool,
-    session_id: &str,
-    did: &str,
-    handle: &str,
-    access_token: &str,
-    refresh_token: Option<&str>,
-    expires_at: i64,
-) -> anyhow::Result<()> {
-    sqlx::query(
-        "INSERT INTO atrg_sessions (id, did, handle, access_token, refresh_token, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .bind(session_id)
-    .bind(did)
-    .bind(handle)
-    .bind(access_token)
-    .bind(refresh_token)
-    .bind(expires_at)
-    .execute(pool)
-    .await?;
-
-    tracing::debug!(did = %did, handle = %handle, "session created");
-    Ok(())
-}
-
-/// Delete a session by ID (logout).
-pub async fn delete_session(pool: &SqlitePool, session_id: &str) -> anyhow::Result<()> {
-    sqlx::query("DELETE FROM atrg_sessions WHERE id = ?")
-        .bind(session_id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-/// Delete all expired sessions (cleanup).
-pub async fn cleanup_expired_sessions(pool: &SqlitePool) -> anyhow::Result<u64> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-
-    let result = sqlx::query("DELETE FROM atrg_sessions WHERE expires_at <= ?")
-        .bind(now)
-        .execute(pool)
-        .await?;
-
-    let deleted = result.rows_affected();
-    if deleted > 0 {
-        tracing::info!(count = deleted, "cleaned up expired sessions");
-    }
-    Ok(deleted)
-}
-
-/// Delete expired OAuth states (cleanup).
-pub async fn cleanup_expired_oauth_states(pool: &SqlitePool) -> anyhow::Result<u64> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-
-    let result = sqlx::query("DELETE FROM atrg_oauth_states WHERE expires_at <= ?")
-        .bind(now)
-        .execute(pool)
-        .await?;
-
-    Ok(result.rows_affected())
-}
-
+/// A session row fetched from either backend.
 #[derive(sqlx::FromRow)]
 struct SessionRow {
     #[allow(dead_code)]
@@ -166,11 +71,197 @@ struct SessionRow {
     expires_at: i64,
 }
 
+impl SessionRow {
+    fn into_session(self) -> AtrgSession {
+        AtrgSession {
+            did: self.did,
+            handle: self.handle,
+            access_token: self.access_token,
+            refresh_token: self.refresh_token,
+            expires_at: self.expires_at,
+            source: AuthSource::Atrg,
+        }
+    }
+}
+
+/// Look up a session by ID, filtering out expired sessions.
+pub async fn find_session(pool: &DbPool, session_id: &str) -> anyhow::Result<Option<AtrgSession>> {
+    let now = now_unix();
+    let row: Option<SessionRow> = match pool {
+        #[cfg(feature = "sqlite")]
+        DbPool::Sqlite(p) => {
+            sqlx::query_as::<_, SessionRow>(
+                "SELECT id, did, handle, access_token, refresh_token, expires_at
+             FROM atrg_sessions
+             WHERE id = ? AND expires_at > ?",
+            )
+            .bind(session_id)
+            .bind(now)
+            .fetch_optional(p)
+            .await?
+        }
+        #[cfg(feature = "postgres")]
+        DbPool::Postgres(p) => {
+            sqlx::query_as::<_, SessionRow>(
+                "SELECT id, did, handle, access_token, refresh_token, expires_at
+             FROM atrg_sessions
+             WHERE id = $1 AND expires_at > $2",
+            )
+            .bind(session_id)
+            .bind(now)
+            .fetch_optional(p)
+            .await?
+        }
+    };
+
+    // Update last_used_at on access — compute timestamp in Rust so the SQL
+    // is identical across dialects.
+    if row.is_some() {
+        let touched = now_unix();
+        match pool {
+            #[cfg(feature = "sqlite")]
+            DbPool::Sqlite(p) => {
+                let _ = sqlx::query("UPDATE atrg_sessions SET last_used_at = ? WHERE id = ?")
+                    .bind(touched)
+                    .bind(session_id)
+                    .execute(p)
+                    .await;
+            }
+            #[cfg(feature = "postgres")]
+            DbPool::Postgres(p) => {
+                let _ = sqlx::query("UPDATE atrg_sessions SET last_used_at = $1 WHERE id = $2")
+                    .bind(touched)
+                    .bind(session_id)
+                    .execute(p)
+                    .await;
+            }
+        }
+    }
+
+    Ok(row.map(SessionRow::into_session))
+}
+
+/// Insert a new session into the database.
+pub async fn create_session(
+    pool: &DbPool,
+    session_id: &str,
+    did: &str,
+    handle: &str,
+    access_token: &str,
+    refresh_token: Option<&str>,
+    expires_at: i64,
+) -> anyhow::Result<()> {
+    match pool {
+        #[cfg(feature = "sqlite")]
+        DbPool::Sqlite(p) => {
+            sqlx::query(
+                "INSERT INTO atrg_sessions (id, did, handle, access_token, refresh_token, expires_at)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(session_id)
+            .bind(did)
+            .bind(handle)
+            .bind(access_token)
+            .bind(refresh_token)
+            .bind(expires_at)
+            .execute(p)
+            .await?;
+        }
+        #[cfg(feature = "postgres")]
+        DbPool::Postgres(p) => {
+            sqlx::query(
+                "INSERT INTO atrg_sessions (id, did, handle, access_token, refresh_token, expires_at)
+                 VALUES ($1, $2, $3, $4, $5, $6)",
+            )
+            .bind(session_id)
+            .bind(did)
+            .bind(handle)
+            .bind(access_token)
+            .bind(refresh_token)
+            .bind(expires_at)
+            .execute(p)
+            .await?;
+        }
+    }
+
+    tracing::debug!(did = %did, handle = %handle, "session created");
+    Ok(())
+}
+
+/// Delete a session by ID (logout).
+pub async fn delete_session(pool: &DbPool, session_id: &str) -> anyhow::Result<()> {
+    match pool {
+        #[cfg(feature = "sqlite")]
+        DbPool::Sqlite(p) => {
+            sqlx::query("DELETE FROM atrg_sessions WHERE id = ?")
+                .bind(session_id)
+                .execute(p)
+                .await?;
+        }
+        #[cfg(feature = "postgres")]
+        DbPool::Postgres(p) => {
+            sqlx::query("DELETE FROM atrg_sessions WHERE id = $1")
+                .bind(session_id)
+                .execute(p)
+                .await?;
+        }
+    }
+    Ok(())
+}
+
+/// Delete all expired sessions (cleanup).
+pub async fn cleanup_expired_sessions(pool: &DbPool) -> anyhow::Result<u64> {
+    let now = now_unix();
+
+    let deleted = match pool {
+        #[cfg(feature = "sqlite")]
+        DbPool::Sqlite(p) => sqlx::query("DELETE FROM atrg_sessions WHERE expires_at <= ?")
+            .bind(now)
+            .execute(p)
+            .await?
+            .rows_affected(),
+        #[cfg(feature = "postgres")]
+        DbPool::Postgres(p) => sqlx::query("DELETE FROM atrg_sessions WHERE expires_at <= $1")
+            .bind(now)
+            .execute(p)
+            .await?
+            .rows_affected(),
+    };
+
+    if deleted > 0 {
+        tracing::info!(count = deleted, "cleaned up expired sessions");
+    }
+    Ok(deleted)
+}
+
+/// Delete expired OAuth states (cleanup).
+pub async fn cleanup_expired_oauth_states(pool: &DbPool) -> anyhow::Result<u64> {
+    let now = now_unix();
+
+    let deleted = match pool {
+        #[cfg(feature = "sqlite")]
+        DbPool::Sqlite(p) => sqlx::query("DELETE FROM atrg_oauth_states WHERE expires_at <= ?")
+            .bind(now)
+            .execute(p)
+            .await?
+            .rows_affected(),
+        #[cfg(feature = "postgres")]
+        DbPool::Postgres(p) => sqlx::query("DELETE FROM atrg_oauth_states WHERE expires_at <= $1")
+            .bind(now)
+            .execute(p)
+            .await?
+            .rows_affected(),
+    };
+
+    Ok(deleted)
+}
+
 #[cfg(test)]
+#[cfg(feature = "sqlite")]
 mod tests {
     use super::*;
 
-    async fn test_pool() -> SqlitePool {
+    async fn test_pool() -> DbPool {
         let pool = atrg_db::connect("sqlite::memory:").await.unwrap();
         atrg_db::run_internal_migrations(&pool).await.unwrap();
         pool
@@ -188,11 +279,7 @@ mod tests {
     async fn create_and_find_session() {
         let pool = test_pool().await;
         let sid = generate_session_id();
-        let expires = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            + 86400;
+        let expires = now_unix() + 86400;
 
         create_session(
             &pool,
@@ -221,12 +308,7 @@ mod tests {
     async fn expired_session_not_found() {
         let pool = test_pool().await;
         let sid = generate_session_id();
-        // Expired 1 hour ago
-        let expires = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            - 3600;
+        let expires = now_unix() - 3600;
 
         create_session(
             &pool,
@@ -248,11 +330,7 @@ mod tests {
     async fn delete_session_works() {
         let pool = test_pool().await;
         let sid = generate_session_id();
-        let expires = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            + 86400;
+        let expires = now_unix() + 86400;
 
         create_session(&pool, &sid, "did:plc:del", "del.test", "tok", None, expires)
             .await
@@ -266,11 +344,7 @@ mod tests {
     #[tokio::test]
     async fn cleanup_expired_sessions_works() {
         let pool = test_pool().await;
-        let expired = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            - 3600;
+        let expired = now_unix() - 3600;
         let valid = expired + 7200;
 
         create_session(&pool, "expired1", "did:plc:e1", "e1", "tok", None, expired)

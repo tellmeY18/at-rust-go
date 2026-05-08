@@ -197,7 +197,7 @@ fn extract_session_id(headers: &axum::http::HeaderMap) -> Option<&str> {
 }
 
 /// Spawn a periodic cleanup task for expired OAuth states and sessions.
-pub fn spawn_cleanup_task(pool: sqlx::SqlitePool) {
+pub fn spawn_cleanup_task(pool: atrg_db::DbPool) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(600)); // every 10 min
         loop {

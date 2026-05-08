@@ -17,14 +17,15 @@ pub async fn healthz() -> Json<serde_json::Value> {
 
 /// `GET /readyz` — readiness probe, checks DB connectivity.
 pub async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
-    match sqlx::query("SELECT 1").execute(&state.db).await {
-        Ok(_) => {
+    match state.db.ping().await {
+        Ok(()) => {
             let metrics = state.identity.metrics();
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
                     "ok": true,
                     "database": "connected",
+                    "database_backend": state.db.backend(),
                     "identity_cache": {
                         "hits": metrics.hits,
                         "misses": metrics.misses,

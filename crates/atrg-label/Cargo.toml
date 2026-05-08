@@ -11,9 +11,12 @@ rust-version.workspace = true
 [dependencies]
 atrg-core = { workspace = true }
 atrg-xrpc = { workspace = true }
-atrg-db = { workspace = true }
+# atrg-label currently only persists labels in SQLite. Apps using PostgreSQL
+# for the rest of their data still need a SQLite pool for the labeler store
+# (or can wait for follow-up Postgres support in this addon crate).
+atrg-db = { workspace = true, features = ["sqlite"] }
 axum = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use atrg_db::DbPool;
 
 use crate::config::Config;
 use atrg_identity::IdentityResolver;
@@ -14,13 +14,15 @@ use atrg_identity::IdentityResolver;
 /// database connection pool, and a shared HTTP client for outbound requests.
 ///
 /// `AppState` is cheaply cloneable — all inner fields are either `Arc`-wrapped
-/// or already use internal reference counting (e.g. `SqlitePool`, `reqwest::Client`).
+/// or already use internal reference counting (e.g. sqlx pools, `reqwest::Client`).
 #[derive(Clone)]
 pub struct AppState {
     /// Parsed configuration from `atrg.toml`.
     pub config: Arc<Config>,
-    /// SQLite connection pool.
-    pub db: SqlitePool,
+    /// Database connection pool. May be SQLite or PostgreSQL depending on
+    /// the `[database] url` scheme in `atrg.toml` (and which features are
+    /// compiled in to `atrg-db`).
+    pub db: DbPool,
     /// Shared HTTP client for outbound requests.
     pub http: reqwest::Client,
     /// DID/handle resolver with TTL-backed in-memory cache.
@@ -32,7 +34,7 @@ pub struct AppState {
 // fields out of AppState without the handler needing to destructure manually.
 // ---------------------------------------------------------------------------
 
-impl axum::extract::FromRef<AppState> for SqlitePool {
+impl axum::extract::FromRef<AppState> for DbPool {
     fn from_ref(state: &AppState) -> Self {
         state.db.clone()
     }

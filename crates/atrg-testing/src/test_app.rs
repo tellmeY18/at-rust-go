@@ -3,7 +3,7 @@
 use atrg_auth::session;
 use atrg_core::config::{AppConfig, AuthConfig, Config, DatabaseConfig};
 use atrg_core::state::AppState;
-use sqlx::SqlitePool;
+use atrg_db::DbPool;
 use std::sync::Arc;
 
 /// Build a test [`AppState`] backed by in-memory SQLite.
@@ -60,7 +60,7 @@ pub async fn test_app() -> (atrg_core::AtrgApp, AppState) {
 ///
 /// Returns the session ID that can be used in `Authorization: Bearer <id>`
 /// or `Cookie: atrg_session=<id>` headers.
-pub async fn seed_session(pool: &SqlitePool, did: &str, handle: &str) -> String {
+pub async fn seed_session(pool: &DbPool, did: &str, handle: &str) -> String {
     let session_id = session::generate_session_id();
     let expires = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

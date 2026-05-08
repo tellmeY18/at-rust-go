@@ -1,12 +1,19 @@
 [package]
 name = "atrg-db"
-description = "Database layer: SQLite pool and migrations for at-rust-go"
+description = "Database layer: SQLite and PostgreSQL pool and migrations for at-rust-go"
 readme = "README.md"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+
+[features]
+default = ["sqlite"]
+# Compile in support for SQLite as a backend (default).
+sqlite = ["sqlx/sqlite"]
+# Compile in support for PostgreSQL as a backend.
+postgres = ["sqlx/postgres"]
 
 [dependencies]
 sqlx = { workspace = true }
@@ -16,3 +23,6 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+
+[package.metadata.docs.rs]
+all-features = true

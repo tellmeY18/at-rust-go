@@ -13,7 +13,7 @@ name = "atrg"
 path = "src/main.rs"
 
 [dependencies]
-atrg-core = { workspace = true }
+atrg-core = { workspace = true, features = ["firehose"] }
 atrg-db = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
@@ -22,3 +22,8 @@ rand = { workspace = true }
 hex = { workspace = true }
 include_dir = { workspace = true }
 atrg-codegen = { workspace = true }
+
+[features]
+default = ["sqlite"]
+sqlite = ["atrg-core/sqlite", "atrg-db/sqlite"]
+postgres = ["atrg-core/postgres", "atrg-db/postgres"]

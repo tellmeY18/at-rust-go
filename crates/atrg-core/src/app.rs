@@ -17,11 +17,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use atrg_db::DbPool;
 use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::Router;
 use futures::future::BoxFuture;
-use sqlx::SqlitePool;
 use tower_http::trace::TraceLayer;
 
 use crate::config::Config;
@@ -31,7 +31,7 @@ use crate::state::AppState;
 
 /// A cleanup task function that receives a database pool and spawns
 /// background maintenance work (e.g. expired session cleanup).
-type CleanupFn = Box<dyn FnOnce(SqlitePool) + Send>;
+type CleanupFn = Box<dyn FnOnce(DbPool) + Send>;
 
 /// The application builder. Accumulates user routers and configuration,
 /// then boots the full server when [`AtrgApp::run`] is called.
@@ -41,6 +41,9 @@ pub struct AtrgApp {
     builtin_router: Option<Router<AppState>>,
     /// Optional cleanup task spawner (e.g. session/oauth-state cleanup).
     cleanup_fn: Option<CleanupFn>,
+    /// Optional caller-supplied database pool. When set, [`AtrgApp::run`]
+    /// uses this pool instead of opening one from `[database] url`.
+    user_db_pool: Option<DbPool>,
     /// Jetstream event handler registered via [`AtrgApp::on_event`].
     event_handler: Option<atrg_stream::EventHandler<AppState>>,
     /// Firehose event handler (registered via [`AtrgApp::on_firehose_event`]).
@@ -55,6 +58,7 @@ impl AtrgApp {
             router: Router::new(),
             builtin_router: None,
             cleanup_fn: None,
+            user_db_pool: None,
             event_handler: None,
             #[cfg(feature = "firehose")]
             firehose_handler: None,
@@ -92,13 +96,40 @@ impl AtrgApp {
     /// Register a background cleanup task that is spawned after the server
     /// starts. Typically used for periodic session / OAuth-state expiry.
     ///
-    /// The callback receives the [`SqlitePool`] and is expected to call
+    /// The callback receives the [`DbPool`] and is expected to call
     /// `tokio::spawn` internally.
     pub fn with_cleanup_task<F>(mut self, f: F) -> Self
     where
-        F: FnOnce(SqlitePool) + Send + 'static,
+        F: FnOnce(DbPool) + Send + 'static,
     {
         self.cleanup_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Use a caller-provided database pool instead of opening a fresh one
+    /// from `[database] url`.
+    ///
+    /// This is the recommended way to integrate atrg into an existing
+    /// application that already manages its own connection pool — for
+    /// example, a service that uses PostgreSQL for its business data and
+    /// wants atrg's internal tables (sessions, OAuth state) to live in the
+    /// same database:
+    ///
+    /// ```rust,ignore
+    /// let pool = sqlx::PgPool::connect(&db_url).await?;
+    ///
+    /// AtrgApp::new()
+    ///     .with_db_pool(pool.into())   // accepts SqlitePool, PgPool, or DbPool
+    ///     .mount(routes::api())
+    ///     .run()
+    ///     .await
+    /// ```
+    ///
+    /// When a pool is provided this way, `[database] url` from `atrg.toml`
+    /// is ignored. atrg's internal migrations are still applied to the
+    /// supplied pool on startup.
+    pub fn with_db_pool(mut self, pool: impl Into<DbPool>) -> Self {
+        self.user_db_pool = Some(pool.into());
         self
     }
 
@@ -203,7 +234,16 @@ impl AtrgApp {
         let config = Arc::new(config);
 
         // 3. Connect DB + migrations --------------------------------------------
-        let db = atrg_db::connect(&config.database.url).await?;
+        let db = match self.user_db_pool {
+            Some(pool) => {
+                tracing::info!(
+                    backend = pool.backend(),
+                    "using caller-supplied database pool (bypassing [database] url)"
+                );
+                pool
+            }
+            None => atrg_db::connect(&config.database.url).await?,
+        };
         atrg_db::run_internal_migrations(&db).await?;
 
         let user_migrations = Path::new("./migrations");
@@ -421,6 +461,36 @@ mod tests {
     fn on_event_sets_handler() {
         let app = AtrgApp::new().on_event(|_event, _state| async { Ok(()) });
         assert!(app.event_handler.is_some());
+    }
+
+    #[tokio::test]
+    async fn with_db_pool_stores_caller_pool() {
+        // Caller-supplied pool should override the [database] url path.
+        let pool = atrg_db::connect("sqlite::memory:").await.unwrap();
+        let app = AtrgApp::new().with_db_pool(pool.clone());
+        assert!(app.user_db_pool.is_some());
+        assert_eq!(app.user_db_pool.as_ref().unwrap().backend(), "sqlite");
+    }
+
+    #[tokio::test]
+    async fn readyz_reports_backend_kind() {
+        // Readiness response should expose the backend identifier so ops
+        // can confirm the right driver is in use.
+        let state = test_state().await;
+        let app: Router = Router::new()
+            .route("/readyz", get(crate::health::readyz))
+            .with_state(state);
+
+        let req = Request::builder()
+            .uri("/readyz")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), 200);
+
+        let bytes = body_bytes(resp).await;
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["database_backend"], "sqlite");
     }
 
     #[tokio::test]
