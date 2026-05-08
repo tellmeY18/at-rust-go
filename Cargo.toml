@@ -19,7 +19,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 license = "LGPL-3.0-only"
 repository = "https://github.com/tellmeY18/at-rust-go"
@@ -33,18 +33,18 @@ rust-version = "1.80"
 # pulling them in transitively (e.g. atrg-repo → atrg-core) gets a working
 # default backend (`sqlite`). Crates that want to override the feature set
 # must do so locally with `default-features = false`.
-atrg-core = { path = "crates/atrg-core", version = "0.1.1", default-features = true }
-atrg-auth = { path = "crates/atrg-auth", version = "0.1.1", default-features = true }
-atrg-stream = { path = "crates/atrg-stream", version = "0.1.1" }
-atrg-db = { path = "crates/atrg-db", version = "0.1.1", default-features = true }
-atrg-xrpc = { path = "crates/atrg-xrpc", version = "0.1.1" }
-atrg-identity = { path = "crates/atrg-identity", version = "0.1.1" }
-atrg-codegen = { path = "crates/atrg-codegen", version = "0.1.1" }
-atrg-testing = { path = "crates/atrg-testing", version = "0.1.1" }
-atrg-repo = { path = "crates/atrg-repo", version = "0.1.1" }
-atrg-firehose = { path = "crates/atrg-firehose", version = "0.1.1" }
-atrg-feed = { path = "crates/atrg-feed", version = "0.1.1" }
-atrg-label = { path = "crates/atrg-label", version = "0.1.1" }
+atrg-core = { path = "crates/atrg-core", version = "0.1.2", default-features = true }
+atrg-auth = { path = "crates/atrg-auth", version = "0.1.2", default-features = true }
+atrg-stream = { path = "crates/atrg-stream", version = "0.1.2" }
+atrg-db = { path = "crates/atrg-db", version = "0.1.2", default-features = true }
+atrg-xrpc = { path = "crates/atrg-xrpc", version = "0.1.2" }
+atrg-identity = { path = "crates/atrg-identity", version = "0.1.2" }
+atrg-codegen = { path = "crates/atrg-codegen", version = "0.1.2" }
+atrg-testing = { path = "crates/atrg-testing", version = "0.1.2" }
+atrg-repo = { path = "crates/atrg-repo", version = "0.1.2" }
+atrg-firehose = { path = "crates/atrg-firehose", version = "0.1.2" }
+atrg-feed = { path = "crates/atrg-feed", version = "0.1.2" }
+atrg-label = { path = "crates/atrg-label", version = "0.1.2" }
 
 # AT Protocol — DO NOT reimplement anything these provide
 atproto-identity = "0.14.2"
