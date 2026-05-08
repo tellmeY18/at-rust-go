@@ -13,8 +13,8 @@ name = "atrg"
 path = "src/main.rs"
 
 [dependencies]
-atrg-core = { workspace = true, default-features = false, features = ["firehose"] }
-atrg-db = { workspace = true, default-features = false }
+atrg-core = { workspace = true, features = ["firehose"] }
+atrg-db = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true }

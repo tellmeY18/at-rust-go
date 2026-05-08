@@ -85,32 +85,33 @@ impl SessionRow {
 }
 
 /// Look up a session by ID, filtering out expired sessions.
-pub async fn find_session(
-    pool: &DbPool,
-    session_id: &str,
-) -> anyhow::Result<Option<AtrgSession>> {
+pub async fn find_session(pool: &DbPool, session_id: &str) -> anyhow::Result<Option<AtrgSession>> {
     let now = now_unix();
     let row: Option<SessionRow> = match pool {
         #[cfg(feature = "sqlite")]
-        DbPool::Sqlite(p) => sqlx::query_as::<_, SessionRow>(
-            "SELECT id, did, handle, access_token, refresh_token, expires_at
+        DbPool::Sqlite(p) => {
+            sqlx::query_as::<_, SessionRow>(
+                "SELECT id, did, handle, access_token, refresh_token, expires_at
              FROM atrg_sessions
              WHERE id = ? AND expires_at > ?",
-        )
-        .bind(session_id)
-        .bind(now)
-        .fetch_optional(p)
-        .await?,
+            )
+            .bind(session_id)
+            .bind(now)
+            .fetch_optional(p)
+            .await?
+        }
         #[cfg(feature = "postgres")]
-        DbPool::Postgres(p) => sqlx::query_as::<_, SessionRow>(
-            "SELECT id, did, handle, access_token, refresh_token, expires_at
+        DbPool::Postgres(p) => {
+            sqlx::query_as::<_, SessionRow>(
+                "SELECT id, did, handle, access_token, refresh_token, expires_at
              FROM atrg_sessions
              WHERE id = $1 AND expires_at > $2",
-        )
-        .bind(session_id)
-        .bind(now)
-        .fetch_optional(p)
-        .await?,
+            )
+            .bind(session_id)
+            .bind(now)
+            .fetch_optional(p)
+            .await?
+        }
     };
 
     // Update last_used_at on access — compute timestamp in Rust so the SQL

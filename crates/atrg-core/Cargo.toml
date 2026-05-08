@@ -9,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-atrg-db = { workspace = true, default-features = false }
+atrg-db = { workspace = true }
 atrg-identity = { workspace = true }
 atrg-stream = { workspace = true }
 axum = { workspace = true }

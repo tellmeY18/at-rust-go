@@ -23,9 +23,7 @@
 #![warn(missing_docs)]
 
 #[cfg(not(any(feature = "sqlite", feature = "postgres")))]
-compile_error!(
-    "atrg-db requires at least one of the `sqlite` or `postgres` cargo features"
-);
+compile_error!("atrg-db requires at least one of the `sqlite` or `postgres` cargo features");
 
 #[cfg(feature = "sqlite")]
 use std::str::FromStr;
@@ -236,14 +234,22 @@ pub async fn run_internal_migrations(pool: &DbPool) -> anyhow::Result<()> {
             let migrator = sqlx::migrate!("./migrations/sqlite");
             let n = migrator.migrations.len();
             migrator.run(p).await?;
-            tracing::info!(count = n, backend = "sqlite", "applied atrg internal migrations");
+            tracing::info!(
+                count = n,
+                backend = "sqlite",
+                "applied atrg internal migrations"
+            );
         }
         #[cfg(feature = "postgres")]
         DbPool::Postgres(p) => {
             let migrator = sqlx::migrate!("./migrations/postgres");
             let n = migrator.migrations.len();
             migrator.run(p).await?;
-            tracing::info!(count = n, backend = "postgres", "applied atrg internal migrations");
+            tracing::info!(
+                count = n,
+                backend = "postgres",
+                "applied atrg internal migrations"
+            );
         }
     }
     Ok(())
@@ -253,10 +259,7 @@ pub async fn run_internal_migrations(pool: &DbPool) -> anyhow::Result<()> {
 ///
 /// If the directory does not exist or contains no `.sql` files, this function
 /// returns `Ok(())` silently.
-pub async fn run_user_migrations(
-    pool: &DbPool,
-    dir: &std::path::Path,
-) -> anyhow::Result<()> {
+pub async fn run_user_migrations(pool: &DbPool, dir: &std::path::Path) -> anyhow::Result<()> {
     if !dir.exists() {
         tracing::debug!(
             path = %dir.display(),
@@ -346,7 +349,8 @@ mod tests {
     #[tokio::test]
     async fn test_user_migrations_nonexistent_dir() {
         let pool = connect("sqlite::memory:").await.expect("connect");
-        let nonexistent = std::path::Path::new("/tmp/atrg_test_nonexistent_dir_that_does_not_exist");
+        let nonexistent =
+            std::path::Path::new("/tmp/atrg_test_nonexistent_dir_that_does_not_exist");
         run_user_migrations(&pool, nonexistent)
             .await
             .expect("nonexistent dir succeeds silently");
@@ -356,7 +360,10 @@ mod tests {
     async fn unsupported_scheme_errors() {
         let err = connect("mysql://localhost/db").await.unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("unsupported database URL scheme"), "got: {msg}");
+        assert!(
+            msg.contains("unsupported database URL scheme"),
+            "got: {msg}"
+        );
     }
 
     #[cfg(not(feature = "postgres"))]

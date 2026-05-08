@@ -15,10 +15,9 @@ pub async fn timeline(
 ) -> Result<Json<serde_json::Value>, AtrgError> {
     let limit = params.effective_limit() as i64;
 
-    let db = state
-        .db
-        .as_sqlite()
-        .ok_or_else(|| AtrgError::Internal(anyhow::anyhow!("social-example requires a SQLite pool")))?;
+    let db = state.db.as_sqlite().ok_or_else(|| {
+        AtrgError::Internal(anyhow::anyhow!("social-example requires a SQLite pool"))
+    })?;
 
     let rows = if let Some(ref cursor) = params.cursor {
         let (ts, _rkey) = decode_cursor(cursor)?;

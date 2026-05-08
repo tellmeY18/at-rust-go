@@ -28,11 +28,15 @@ authors = ["tellmeY18"]
 rust-version = "1.80"
 
 [workspace.dependencies]
-# Internal crates — version is required for crates.io publishing
-atrg-core = { path = "crates/atrg-core", version = "0.1.1", default-features = false }
-atrg-auth = { path = "crates/atrg-auth", version = "0.1.1", default-features = false }
+# Internal crates — version is required for crates.io publishing.
+# Defaults are kept ON in the workspace declarations so that any crate
+# pulling them in transitively (e.g. atrg-repo → atrg-core) gets a working
+# default backend (`sqlite`). Crates that want to override the feature set
+# must do so locally with `default-features = false`.
+atrg-core = { path = "crates/atrg-core", version = "0.1.1", default-features = true }
+atrg-auth = { path = "crates/atrg-auth", version = "0.1.1", default-features = true }
 atrg-stream = { path = "crates/atrg-stream", version = "0.1.1" }
-atrg-db = { path = "crates/atrg-db", version = "0.1.1", default-features = false }
+atrg-db = { path = "crates/atrg-db", version = "0.1.1", default-features = true }
 atrg-xrpc = { path = "crates/atrg-xrpc", version = "0.1.1" }
 atrg-identity = { path = "crates/atrg-identity", version = "0.1.1" }
 atrg-codegen = { path = "crates/atrg-codegen", version = "0.1.1" }

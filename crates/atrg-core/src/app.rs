@@ -17,11 +17,11 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use atrg_db::DbPool;
 use axum::response::IntoResponse;
 use axum::routing::any;
 use axum::Router;
 use futures::future::BoxFuture;
-use atrg_db::DbPool;
 use tower_http::trace::TraceLayer;
 
 use crate::config::Config;

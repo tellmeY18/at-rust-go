@@ -21,10 +21,9 @@ pub async fn profile(
 
     let did = &identity.did;
 
-    let db = state
-        .db
-        .as_sqlite()
-        .ok_or_else(|| AtrgError::Internal(anyhow::anyhow!("social-example requires a SQLite pool")))?;
+    let db = state.db.as_sqlite().ok_or_else(|| {
+        AtrgError::Internal(anyhow::anyhow!("social-example requires a SQLite pool"))
+    })?;
 
     // Count posts
     let (post_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM posts WHERE did = ?")

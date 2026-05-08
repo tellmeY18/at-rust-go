@@ -17,7 +17,7 @@ postgres = ["atrg-db/postgres"]
 
 [dependencies]
 atrg-core = { workspace = true }
-atrg-db = { workspace = true, default-features = false }
+atrg-db = { workspace = true }
 axum = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }
