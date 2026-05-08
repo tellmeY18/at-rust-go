@@ -1,6 +1,6 @@
 # atrg-db
 
-**Database layer for at-rust-go: SQLite connection pooling and migrations.**
+**Database layer for at-rust-go: SQLite and PostgreSQL connection pooling and migrations.**
 
 Part of [at-rust-go (atrg)](https://github.com/tellmeY18/at-rust-go) — a batteries-included AT Protocol backend framework for Rust.
 
@@ -11,45 +11,64 @@ Part of [at-rust-go (atrg)](https://github.com/tellmeY18/at-rust-go) — a batte
 
 ## What this crate provides
 
-- **`DbConn`** — type alias for `sqlx::SqlitePool`, the primary database handle used throughout atrg
-- **`connect(url)`** — create a connection pool with sensible defaults (WAL journal mode, foreign keys enabled, auto-create database file)
-- **`run_internal_migrations(pool)`** — apply atrg's own embedded migrations (sessions table, etc.), idempotent on every startup
+- **`DbPool`** — enum wrapping either `sqlx::SqlitePool` or `sqlx::PgPool`, the primary database handle used throughout atrg
+- **`connect(url)`** — create a connection pool, dispatching by URL scheme (`sqlite://`, `sqlite::memory:`, `postgres://`, `postgresql://`)
+- **`run_internal_migrations(pool)`** — apply atrg's own embedded migrations (sessions table, etc.) using the dialect matching the pool variant; idempotent on every startup
 - **`run_user_migrations(pool, dir)`** — discover and apply application-specific `.sql` migrations from a directory, silently skipping if the directory is missing or empty
 
-The crate does **not** provide an ORM. Write SQL with `sqlx::query!()` for compile-time checked queries.
+The crate does **not** provide an ORM. Write SQL with `sqlx`.
+
+## Cargo features
+
+| Feature    | Default | Effect                                                                 |
+|------------|:-------:|------------------------------------------------------------------------|
+| `sqlite`   | ✅       | Pulls in the `sqlx/sqlite` driver and enables `DbPool::Sqlite`.        |
+| `postgres` | ❌       | Pulls in the `sqlx/postgres` driver and enables `DbPool::Postgres`.    |
+
+At least one of `sqlite` or `postgres` must be enabled (a `compile_error!` fires otherwise). Enabling both is supported; `connect()` picks the backend at runtime from the URL scheme.
 
 ## Usage
 
 ```toml
 [dependencies]
+# SQLite only (default)
 atrg-db = "0.1"
+
+# PostgreSQL only
+atrg-db = { version = "0.1", default-features = false, features = ["postgres"] }
+
+# Both backends — let `connect()` choose at runtime
+atrg-db = { version = "0.1", features = ["postgres"] }
 ```
 
 ```rust
-use atrg_db::DbConn;
+use atrg_db::DbPool;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Connect to SQLite (file is created if missing)
-    let pool: DbConn = atrg_db::connect("sqlite://atrg.db").await?;
+    // Pick the backend from the URL scheme
+    let pool: DbPool = atrg_db::connect("sqlite://atrg.db").await?;
+    // or: let pool = atrg_db::connect("postgres://user:pass@host/db").await?;
 
-    // Run atrg internal migrations (sessions, etc.)
+    // Run atrg internal migrations (sessions, OAuth state, etc.)
     atrg_db::run_internal_migrations(&pool).await?;
 
     // Run your app's migrations from the migrations/ directory
     atrg_db::run_user_migrations(&pool, std::path::Path::new("./migrations")).await?;
 
-    // Use the pool in your handlers
-    let row: (i32,) = sqlx::query_as("SELECT 1")
-        .fetch_one(&pool)
-        .await?;
-    assert_eq!(row.0, 1);
+    // Borrow the underlying sqlx pool to run queries
+    if let Some(sqlite) = pool.as_sqlite() {
+        let row: (i32,) = sqlx::query_as("SELECT 1").fetch_one(sqlite).await?;
+        assert_eq!(row.0, 1);
+    }
 
     Ok(())
 }
 ```
 
 ## Connection defaults
+
+### SQLite
 
 | Setting              | Value  |
 |----------------------|--------|
@@ -58,9 +77,15 @@ async fn main() -> anyhow::Result<()> {
 | Create if missing    | Yes    |
 | Max connections      | 8      |
 
+### PostgreSQL
+
+| Setting              | Value  |
+|----------------------|--------|
+| Max connections      | 8      |
+
 ## Migration conventions
 
-atrg's internal migrations run first (prefixed `atrg_`). User migrations live in your project's `migrations/` directory and are applied in filename order:
+atrg's internal migrations live in this crate under `migrations/sqlite/` and `migrations/postgres/`. The set matching the active `DbPool` variant is run automatically. User migrations live in your project's `migrations/` directory and are applied in filename order against the same backend:
 
 ```
 migrations/

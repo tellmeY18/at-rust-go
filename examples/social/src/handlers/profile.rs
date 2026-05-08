@@ -21,10 +21,15 @@ pub async fn profile(
 
     let did = &identity.did;
 
+    let db = state
+        .db
+        .as_sqlite()
+        .ok_or_else(|| AtrgError::Internal(anyhow::anyhow!("social-example requires a SQLite pool")))?;
+
     // Count posts
     let (post_count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM posts WHERE did = ?")
         .bind(did)
-        .fetch_one(&state.db)
+        .fetch_one(db)
         .await
         .unwrap_or((0,));
 
@@ -32,7 +37,7 @@ pub async fn profile(
     let (follower_count,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM follows WHERE target_did = ?")
             .bind(did)
-            .fetch_one(&state.db)
+            .fetch_one(db)
             .await
             .unwrap_or((0,));
 
@@ -40,7 +45,7 @@ pub async fn profile(
     let (following_count,): (i64,) =
         sqlx::query_as("SELECT COUNT(*) FROM follows WHERE subject_did = ?")
             .bind(did)
-            .fetch_one(&state.db)
+            .fetch_one(db)
             .await
             .unwrap_or((0,));
 

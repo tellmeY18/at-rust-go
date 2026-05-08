@@ -8,9 +8,16 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["sqlite"]
+# Forwards to `atrg-db/sqlite` so apps can omit the sqlite driver.
+sqlite = ["atrg-db/sqlite"]
+# Forwards to `atrg-db/postgres` to enable the PostgreSQL backend.
+postgres = ["atrg-db/postgres"]
+
 [dependencies]
 atrg-core = { workspace = true }
-atrg-db = { workspace = true }
+atrg-db = { workspace = true, default-features = false }
 axum = { workspace = true }
 sqlx = { workspace = true }
 serde = { workspace = true }

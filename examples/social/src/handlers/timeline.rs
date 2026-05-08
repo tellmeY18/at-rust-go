@@ -15,6 +15,11 @@ pub async fn timeline(
 ) -> Result<Json<serde_json::Value>, AtrgError> {
     let limit = params.effective_limit() as i64;
 
+    let db = state
+        .db
+        .as_sqlite()
+        .ok_or_else(|| AtrgError::Internal(anyhow::anyhow!("social-example requires a SQLite pool")))?;
+
     let rows = if let Some(ref cursor) = params.cursor {
         let (ts, _rkey) = decode_cursor(cursor)?;
         sqlx::query_as::<_, PostRow>(
@@ -26,7 +31,7 @@ pub async fn timeline(
         )
         .bind(ts)
         .bind(limit + 1)
-        .fetch_all(&state.db)
+        .fetch_all(db)
         .await
         .map_err(AtrgError::Database)?
     } else {
@@ -37,7 +42,7 @@ pub async fn timeline(
              LIMIT ?",
         )
         .bind(limit + 1)
-        .fetch_all(&state.db)
+        .fetch_all(db)
         .await
         .map_err(AtrgError::Database)?
     };

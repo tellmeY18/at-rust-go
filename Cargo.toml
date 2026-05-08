@@ -29,10 +29,10 @@ rust-version = "1.80"
 
 [workspace.dependencies]
 # Internal crates — version is required for crates.io publishing
-atrg-core = { path = "crates/atrg-core", version = "0.1.1" }
-atrg-auth = { path = "crates/atrg-auth", version = "0.1.1" }
+atrg-core = { path = "crates/atrg-core", version = "0.1.1", default-features = false }
+atrg-auth = { path = "crates/atrg-auth", version = "0.1.1", default-features = false }
 atrg-stream = { path = "crates/atrg-stream", version = "0.1.1" }
-atrg-db = { path = "crates/atrg-db", version = "0.1.1" }
+atrg-db = { path = "crates/atrg-db", version = "0.1.1", default-features = false }
 atrg-xrpc = { path = "crates/atrg-xrpc", version = "0.1.1" }
 atrg-identity = { path = "crates/atrg-identity", version = "0.1.1" }
 atrg-codegen = { path = "crates/atrg-codegen", version = "0.1.1" }
@@ -65,7 +65,14 @@ tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 
 # Database
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio", "migrate"] }
+#
+# `atrg-db` exposes two cargo features (`sqlite`, default-on, and `postgres`,
+# optional) that toggle the corresponding sqlx driver features. Apps that
+# only need SQLite can use `atrg-db` as-is. Apps that want PostgreSQL enable
+# the `postgres` feature on `atrg-db` (or on `atrg-core` / `atrg-cli`, which
+# forward it). Both features may be enabled simultaneously, in which case
+# `atrg-db::connect()` dispatches based on the URL scheme.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "migrate", "macros"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

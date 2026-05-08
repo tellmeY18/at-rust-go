@@ -9,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-atrg-db = { workspace = true }
+atrg-db = { workspace = true, default-features = false }
 atrg-identity = { workspace = true }
 atrg-stream = { workspace = true }
 axum = { workspace = true }
@@ -40,10 +40,17 @@ hex = { workspace = true }
 atrg-firehose = { workspace = true, optional = true }
 
 [features]
-default = ["firehose"]
+default = ["firehose", "sqlite"]
 firehose = ["dep:atrg-firehose"]
+# Forwards to `atrg-db/sqlite`. Default-on so the simple "just works"
+# experience continues to require no additional features.
+sqlite = ["atrg-db/sqlite"]
+# Forwards to `atrg-db/postgres` to enable PostgreSQL as a backend.
+postgres = ["atrg-db/postgres"]
 
 [dev-dependencies]
+atrg-db = { workspace = true, features = ["sqlite"] }
+sqlx = { workspace = true, features = ["sqlite"] }
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"

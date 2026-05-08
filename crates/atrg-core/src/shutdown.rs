@@ -53,10 +53,10 @@ pub async fn shutdown_signal() {
 
 /// Run cleanup tasks after the server stops accepting connections.
 ///
-/// Currently this closes the SQLite connection pool, waiting up to `timeout`
+/// Currently this closes the database connection pool, waiting up to `timeout`
 /// for in-flight queries to complete. If no timeout is provided the default
 /// of 30 seconds is used.
-pub async fn shutdown_cleanup(db: &sqlx::SqlitePool, timeout: Option<Duration>) {
+pub async fn shutdown_cleanup(db: &atrg_db::DbPool, timeout: Option<Duration>) {
     let timeout = timeout.unwrap_or(Duration::from_secs(DEFAULT_SHUTDOWN_TIMEOUT_SECS));
     tracing::info!(timeout_secs = timeout.as_secs(), "running shutdown cleanup");
 
@@ -87,14 +87,14 @@ mod tests {
 
     #[tokio::test]
     async fn shutdown_cleanup_completes_with_fresh_pool() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = atrg_db::connect("sqlite::memory:").await.unwrap();
         shutdown_cleanup(&pool, Some(Duration::from_secs(5))).await;
         assert!(pool.is_closed());
     }
 
     #[tokio::test]
     async fn shutdown_cleanup_handles_already_closed_pool() {
-        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let pool = atrg_db::connect("sqlite::memory:").await.unwrap();
         pool.close().await;
         // Should not panic
         shutdown_cleanup(&pool, Some(Duration::from_secs(1))).await;

@@ -57,6 +57,13 @@ redirect_uri = "http://localhost:3000/auth/callback"
 scope = "atproto transition:generic"
 
 [database]
+# atrg supports SQLite (default) and PostgreSQL. The backend is chosen from
+# the URL scheme:
+#   - sqlite://atrg.db          (file-backed SQLite)
+#   - sqlite::memory:           (in-memory SQLite, useful for tests)
+#   - postgres://user:pw@host/db (requires building atrg with the
+#                                 `postgres` feature, e.g.
+#                                 `cargo build --features atrg-cli/postgres`)
 url = "sqlite://atrg.db"
 
 # Uncomment to enable Jetstream
