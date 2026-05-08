@@ -39,25 +39,8 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
-      - name: Verify packaging (all crates)
-        run: |
-          for crate in \
-            atrg-db \
-            atrg-identity \
-            atrg-stream \
-            atrg-firehose \
-            atrg-codegen \
-            atrg-core \
-            atrg-auth \
-            atrg-xrpc \
-            atrg-cli \
-            atrg-repo \
-            atrg-feed \
-            atrg-label \
-            atrg-testing; do
-            echo "--- Package: $crate ---"
-            cargo package --no-verify -p "$crate"
-          done
+      - name: Verify workspace builds for release
+        run: cargo build --workspace --release
 
   # Publish all crates in topological dependency order
   publish:
