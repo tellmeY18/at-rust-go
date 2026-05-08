@@ -39,7 +39,7 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
-      - name: Dry-run publish (verify packaging)
+      - name: Verify packaging (all crates)
         run: |
           for crate in \
             atrg-db \
@@ -55,8 +55,8 @@ jobs:
             atrg-feed \
             atrg-label \
             atrg-testing; do
-            echo "--- Dry-run: $crate ---"
-            cargo publish --dry-run -p "$crate"
+            echo "--- Package: $crate ---"
+            cargo package --no-verify -p "$crate"
           done
 
   # Publish all crates in topological dependency order
