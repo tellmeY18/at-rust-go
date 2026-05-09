@@ -28,6 +28,7 @@ pub async fn test_state() -> AppState {
             client_id: "http://localhost:3000/client-metadata.json".into(),
             redirect_uri: "http://localhost:3000/auth/callback".into(),
             scope: "atproto transition:generic".into(),
+            post_login_redirect: "/".into(),
         },
         database: DatabaseConfig {
             url: "sqlite::memory:".into(),

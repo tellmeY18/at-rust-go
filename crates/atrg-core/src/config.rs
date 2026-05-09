@@ -120,6 +120,12 @@ pub struct AuthConfig {
     /// OAuth scope string.
     #[serde(default = "default_scope")]
     pub scope: String,
+
+    /// URL to redirect the browser to after successful OAuth login.
+    /// This is the **frontend** URL, not the OAuth callback.
+    /// Defaults to `"/"`.
+    #[serde(default = "default_post_login_redirect")]
+    pub post_login_redirect: String,
 }
 
 impl Default for AuthConfig {
@@ -128,6 +134,7 @@ impl Default for AuthConfig {
             client_id: default_client_id(),
             redirect_uri: default_redirect_uri(),
             scope: default_scope(),
+            post_login_redirect: default_post_login_redirect(),
         }
     }
 }
@@ -142,6 +149,10 @@ fn default_redirect_uri() -> String {
 
 fn default_scope() -> String {
     "atproto transition:generic".to_string()
+}
+
+fn default_post_login_redirect() -> String {
+    "/".to_string()
 }
 
 // ---------------------------------------------------------------------------

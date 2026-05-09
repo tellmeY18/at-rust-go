@@ -2,8 +2,8 @@
 //!
 //! These routes are mounted automatically by `AtrgApp::run()`:
 //!
-//! - `GET /auth/login?handle=<handle>` — initiate OAuth
-//! - `GET /auth/callback` — OAuth callback
+//! - `GET /auth/login?handle=<handle>` — initiate OAuth PKCE + DPoP flow
+//! - `GET /auth/callback` — OAuth callback (exchange code for tokens)
 //! - `POST /auth/logout` — clear session
 //! - `GET /auth/session` — current session info (JSON)
 //! - `GET /client-metadata.json` — OAuth client metadata
@@ -19,6 +19,7 @@ use atrg_core::error::AtrgError;
 use atrg_core::state::AppState;
 
 use crate::extractor::RequireAuth;
+use crate::oauth;
 use crate::session;
 
 /// Build the auth router with all authentication routes.
@@ -84,15 +85,21 @@ pub async fn well_known(State(state): State<AppState>) -> Json<serde_json::Value
 pub struct LoginQuery {
     /// The user's AT Protocol handle.
     handle: Option<String>,
+    /// URL to redirect the browser to after login (overrides config default).
+    redirect_after: Option<String>,
 }
 
 /// `GET /auth/login?handle=<handle>`
 ///
-/// In a full implementation, this initiates the OAuth PKCE flow with the
-/// user's PDS. For now, this is a stub that validates the handle parameter
-/// and returns an error explaining OAuth is not yet wired to a real PDS.
+/// Initiates the AT Protocol OAuth PKCE + DPoP flow:
+/// 1. Resolves the handle to a DID via the identity resolver
+/// 2. Discovers the PDS's OAuth authorization server metadata
+/// 3. Generates PKCE code verifier + challenge
+/// 4. Generates an ephemeral ES256 DPoP keypair
+/// 5. Stores the OAuth state in the database
+/// 6. Redirects the browser to the PDS authorization endpoint
 async fn login(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Query(params): Query<LoginQuery>,
 ) -> Result<Response, AtrgError> {
     let handle = params
@@ -100,35 +107,244 @@ async fn login(
         .filter(|h| !h.trim().is_empty())
         .ok_or_else(|| AtrgError::BadRequest("missing 'handle' query parameter".to_string()))?;
 
+    let redirect_after = params
+        .redirect_after
+        .filter(|r| !r.trim().is_empty())
+        .unwrap_or_else(|| state.config.auth.post_login_redirect.clone());
+
     tracing::info!(handle = %handle, "OAuth login initiated");
 
-    // TODO(phase2-full): Wire up atproto-oauth-axum for real OAuth flow.
-    // For now, return a JSON response explaining the flow.
-    Ok((
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "status": "oauth_not_yet_wired",
-            "message": "OAuth PKCE flow will be wired via atproto-oauth-axum in the next iteration. For now, use the session injection API for testing.",
-            "handle": handle,
-        })),
-    )
-        .into_response())
+    // 1. Resolve handle → DID + PDS endpoint
+    let identity = state.identity.resolve(&handle).await.map_err(|e| {
+        AtrgError::BadRequest(format!("failed to resolve handle '{}': {}", handle, e))
+    })?;
+
+    let did = &identity.did;
+    let pds_endpoint = identity.pds_endpoint.as_deref().ok_or_else(|| {
+        AtrgError::BadRequest(format!(
+            "no PDS endpoint found for handle '{}' (DID: {})",
+            handle, did
+        ))
+    })?;
+
+    tracing::debug!(did = %did, pds = %pds_endpoint, "resolved handle");
+
+    // 2. Discover PDS OAuth metadata
+    let metadata = oauth::discover_pds_oauth_metadata(&state.http, pds_endpoint)
+        .await
+        .map_err(|e| {
+            AtrgError::Internal(anyhow::anyhow!(
+                "failed to discover OAuth metadata for PDS '{}': {}",
+                pds_endpoint,
+                e
+            ))
+        })?;
+
+    // 3. Generate PKCE code verifier + challenge
+    let code_verifier = oauth::generate_code_verifier();
+    let code_challenge = oauth::compute_code_challenge(&code_verifier);
+
+    // 4. Generate DPoP keypair
+    let dpop = oauth::generate_dpop_keypair().map_err(|e| {
+        AtrgError::Internal(anyhow::anyhow!("failed to generate DPoP keypair: {}", e))
+    })?;
+
+    // 5. Generate random state + nonce
+    let oauth_state_id = session::generate_session_id();
+    let nonce = session::generate_session_id();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    // 6. Store OAuth state in DB (10-minute expiry)
+    let oauth_state = session::OAuthState {
+        state: oauth_state_id.clone(),
+        pkce_verifier: code_verifier,
+        dpop_private_key: dpop.private_key_jwk,
+        token_endpoint: metadata.token_endpoint.clone(),
+        did: did.clone(),
+        handle: handle.clone(),
+        nonce: nonce.clone(),
+        redirect_after,
+        expires_at: now + 600,
+    };
+
+    session::save_oauth_state(&state.db, &oauth_state)
+        .await
+        .map_err(|e| AtrgError::Internal(anyhow::anyhow!("failed to save OAuth state: {}", e)))?;
+
+    // 7. Build authorization URL
+    let mut auth_url = url::Url::parse(&metadata.authorization_endpoint).map_err(|e| {
+        AtrgError::Internal(anyhow::anyhow!("invalid authorization endpoint URL: {}", e))
+    })?;
+
+    auth_url
+        .query_pairs_mut()
+        .append_pair("response_type", "code")
+        .append_pair("client_id", &state.config.auth.client_id)
+        .append_pair("redirect_uri", &state.config.auth.redirect_uri)
+        .append_pair("scope", &state.config.auth.scope)
+        .append_pair("state", &oauth_state_id)
+        .append_pair("code_challenge", &code_challenge)
+        .append_pair("code_challenge_method", "S256")
+        .append_pair("login_hint", &handle);
+
+    tracing::info!(
+        did = %did,
+        handle = %handle,
+        authorization_endpoint = %metadata.authorization_endpoint,
+        "redirecting to PDS authorization endpoint"
+    );
+
+    // 8. Redirect
+    Ok(axum::response::Redirect::temporary(auth_url.as_str()).into_response())
 }
 
-/// `GET /auth/callback`
+/// Callback query parameters from the PDS authorization server.
+#[derive(serde::Deserialize)]
+pub struct CallbackQuery {
+    /// The authorization code from the PDS.
+    code: Option<String>,
+    /// The state parameter (must match what we stored).
+    state: Option<String>,
+    /// OAuth error code (if the user denied or something went wrong).
+    error: Option<String>,
+    /// Human-readable error description.
+    error_description: Option<String>,
+}
+
+/// `GET /auth/callback?code=...&state=...`
 ///
-/// OAuth callback handler. Stub for now.
-async fn callback(State(_state): State<AppState>) -> Result<Response, AtrgError> {
-    // TODO(phase2-full): Process OAuth callback, exchange code for tokens,
-    // create session, set cookie, redirect.
-    Ok((
-        StatusCode::OK,
-        Json(serde_json::json!({
-            "status": "callback_stub",
-            "message": "OAuth callback will be implemented with atproto-oauth-axum.",
-        })),
+/// Handles the OAuth callback from the PDS:
+/// 1. Validates the state parameter against the database
+/// 2. Exchanges the authorization code for tokens via DPoP
+/// 3. Verifies the returned DID matches the expected one
+/// 4. Creates an atrg session in the database
+/// 5. Sets the session cookie and redirects to the frontend
+async fn callback(
+    State(state): State<AppState>,
+    Query(params): Query<CallbackQuery>,
+) -> Result<Response, AtrgError> {
+    // Check for OAuth errors first
+    if let Some(error) = &params.error {
+        let description = params
+            .error_description
+            .as_deref()
+            .unwrap_or("unknown error");
+        tracing::warn!(error = %error, description = %description, "OAuth callback received error");
+        return Err(AtrgError::Auth(format!(
+            "OAuth authorization failed: {} — {}",
+            error, description
+        )));
+    }
+
+    let code = params
+        .code
+        .filter(|c| !c.trim().is_empty())
+        .ok_or_else(|| AtrgError::BadRequest("missing 'code' parameter in callback".to_string()))?;
+
+    let state_param = params
+        .state
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| {
+            AtrgError::BadRequest("missing 'state' parameter in callback".to_string())
+        })?;
+
+    // 1. Look up the OAuth state from DB
+    let oauth_state = session::find_oauth_state(&state.db, &state_param)
+        .await
+        .map_err(|e| AtrgError::Internal(anyhow::anyhow!("failed to look up OAuth state: {}", e)))?
+        .ok_or_else(|| {
+            AtrgError::BadRequest(
+                "invalid or expired OAuth state — the login may have timed out, please try again"
+                    .to_string(),
+            )
+        })?;
+
+    // 2. Delete the state immediately (one-time use)
+    session::delete_oauth_state(&state.db, &state_param)
+        .await
+        .map_err(|e| AtrgError::Internal(anyhow::anyhow!("failed to delete OAuth state: {}", e)))?;
+
+    tracing::debug!(
+        did = %oauth_state.did,
+        handle = %oauth_state.handle,
+        "OAuth callback processing"
+    );
+
+    // 3. Exchange the authorization code for tokens
+    let token_response = oauth::exchange_code_for_tokens(
+        &state.http,
+        &oauth_state.token_endpoint,
+        &code,
+        &oauth_state.pkce_verifier,
+        &state.config.auth.redirect_uri,
+        &state.config.auth.client_id,
+        &oauth_state.dpop_private_key,
     )
-        .into_response())
+    .await
+    .map_err(|e| AtrgError::Internal(anyhow::anyhow!("token exchange failed: {}", e)))?;
+
+    // 4. Verify the returned DID matches what we expected
+    if token_response.sub != oauth_state.did {
+        tracing::error!(
+            expected = %oauth_state.did,
+            got = %token_response.sub,
+            "DID mismatch in token response"
+        );
+        return Err(AtrgError::Auth(format!(
+            "DID mismatch: expected {}, got {}",
+            oauth_state.did, token_response.sub
+        )));
+    }
+
+    // 5. Create an atrg session
+    let session_id = session::generate_session_id();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let expires_in = token_response.expires_in.unwrap_or(86400);
+    let expires_at = now + expires_in as i64;
+
+    session::create_session(
+        &state.db,
+        &session_id,
+        &token_response.sub,
+        &oauth_state.handle,
+        &token_response.access_token,
+        token_response.refresh_token.as_deref(),
+        expires_at,
+    )
+    .await
+    .map_err(|e| AtrgError::Internal(anyhow::anyhow!("failed to create session: {}", e)))?;
+
+    tracing::info!(
+        did = %token_response.sub,
+        handle = %oauth_state.handle,
+        expires_in = expires_in,
+        "OAuth login successful, session created"
+    );
+
+    // 6. Set the session cookie and redirect to the frontend
+    let is_secure = state.config.app.environment != "development";
+    let cookie_value = format!(
+        "atrg_session={}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax{}",
+        session_id,
+        expires_in,
+        if is_secure { "; Secure" } else { "" }
+    );
+
+    let redirect_url = &oauth_state.redirect_after;
+    let mut response = axum::response::Redirect::temporary(redirect_url).into_response();
+
+    if let Ok(val) = HeaderValue::from_str(&cookie_value) {
+        response.headers_mut().insert("set-cookie", val);
+    }
+
+    Ok(response)
 }
 
 /// `POST /auth/logout`
@@ -240,6 +456,7 @@ mod tests {
                     client_id: "http://localhost:3000/client-metadata.json".into(),
                     redirect_uri: "http://localhost:3000/auth/callback".into(),
                     scope: "atproto transition:generic".into(),
+                    post_login_redirect: "/".into(),
                 },
                 database: DatabaseConfig {
                     url: "sqlite::memory:".into(),
@@ -444,5 +661,65 @@ mod tests {
         // Session should be gone
         let s = session::find_session(&state.db, &sid).await.unwrap();
         assert!(s.is_none());
+    }
+
+    #[tokio::test]
+    async fn callback_without_code_returns_400() {
+        let state = test_state().await;
+        let app = test_router(state);
+        let resp = app
+            .oneshot(
+                Request::get("/auth/callback?state=abc")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400);
+    }
+
+    #[tokio::test]
+    async fn callback_without_state_returns_400() {
+        let state = test_state().await;
+        let app = test_router(state);
+        let resp = app
+            .oneshot(
+                Request::get("/auth/callback?code=abc")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400);
+    }
+
+    #[tokio::test]
+    async fn callback_with_invalid_state_returns_400() {
+        let state = test_state().await;
+        let app = test_router(state);
+        let resp = app
+            .oneshot(
+                Request::get("/auth/callback?code=abc&state=nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 400);
+    }
+
+    #[tokio::test]
+    async fn callback_with_error_returns_401() {
+        let state = test_state().await;
+        let app = test_router(state);
+        let resp = app
+            .oneshot(
+                Request::get("/auth/callback?error=access_denied&error_description=user+denied")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 401);
     }
 }

@@ -30,6 +30,10 @@ jsonwebtoken = { workspace = true }
 rand = { workspace = true }
 base64 = "0.22"
 time = "0.3"
+p256 = { version = "0.13", features = ["jwk", "pem"] }
+sha2 = "0.10"
+reqwest = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 atrg-identity = { workspace = true }

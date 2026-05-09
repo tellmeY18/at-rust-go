@@ -7,11 +7,12 @@
 
 pub mod extractor;
 pub mod jwt;
+pub mod oauth;
 pub mod routes;
 pub mod session;
 
 pub use extractor::{AuthUser, RequireAuth};
-pub use session::{AtrgSession, AuthSource};
+pub use session::{AtrgSession, AuthSource, OAuthState};
 
 /// Returns the crate version.
 pub fn version() -> &'static str {
