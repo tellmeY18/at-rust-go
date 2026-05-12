@@ -13,6 +13,7 @@
 //! In CI, a Postgres service container is spun up automatically.
 
 #![cfg(feature = "postgres")]
+#![allow(unused_imports, unused_macros, dead_code)]
 
 use std::sync::Arc;
 
