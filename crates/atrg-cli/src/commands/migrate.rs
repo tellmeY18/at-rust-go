@@ -8,7 +8,7 @@ pub async fn run() -> anyhow::Result<()> {
     let pool = atrg_db::connect(&config.database.url).await?;
 
     atrg_db::run_internal_migrations(&pool).await?;
-    atrg_db::run_user_migrations(&pool, Path::new("./migrations")).await?;
+    atrg_db::run_isolated_migrations(&pool, Path::new("./migrations"), "_app_migrations").await?;
 
     println!("✓ Migrations complete");
     Ok(())

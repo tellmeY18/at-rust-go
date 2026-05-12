@@ -1,7 +1,7 @@
 //! OTP generation, storage, and verification.
 
-use atrg_db::DbPool;
 use crate::config::EmailConfig;
+use atrg_db::DbPool;
 
 /// Generate a 6-digit OTP code.
 pub fn generate_otp() -> String {
@@ -32,18 +32,26 @@ pub async fn send_otp(
         #[cfg(feature = "sqlite")]
         DbPool::Sqlite(p) => {
             sqlx::query(
-                "INSERT INTO atrg_otp_codes (did, email, code, expires_at) VALUES (?1, ?2, ?3, ?4)"
+                "INSERT INTO atrg_otp_codes (did, email, code, expires_at) VALUES (?1, ?2, ?3, ?4)",
             )
-            .bind(did).bind(email).bind(&code).bind(expires_at)
-            .execute(p).await?;
+            .bind(did)
+            .bind(email)
+            .bind(&code)
+            .bind(expires_at)
+            .execute(p)
+            .await?;
         }
         #[cfg(feature = "postgres")]
         DbPool::Postgres(p) => {
             sqlx::query(
-                "INSERT INTO atrg_otp_codes (did, email, code, expires_at) VALUES ($1, $2, $3, $4)"
+                "INSERT INTO atrg_otp_codes (did, email, code, expires_at) VALUES ($1, $2, $3, $4)",
             )
-            .bind(did).bind(email).bind(&code).bind(expires_at)
-            .execute(p).await?;
+            .bind(did)
+            .bind(email)
+            .bind(&code)
+            .bind(expires_at)
+            .execute(p)
+            .await?;
         }
     }
 
@@ -61,12 +69,7 @@ pub async fn send_otp(
 
 /// Verify an OTP code. Returns `true` if valid and not expired/used.
 /// Marks the OTP as used on success.
-pub async fn verify_otp(
-    pool: &DbPool,
-    did: &str,
-    email: &str,
-    code: &str,
-) -> anyhow::Result<bool> {
+pub async fn verify_otp(pool: &DbPool, did: &str, email: &str, code: &str) -> anyhow::Result<bool> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -100,18 +103,24 @@ pub async fn verify_otp(
         #[cfg(feature = "sqlite")]
         DbPool::Sqlite(p) => {
             sqlx::query(
-                "UPDATE atrg_otp_codes SET used = 1 WHERE did = ?1 AND email = ?2 AND code = ?3"
+                "UPDATE atrg_otp_codes SET used = 1 WHERE did = ?1 AND email = ?2 AND code = ?3",
             )
-            .bind(did).bind(email).bind(code)
-            .execute(p).await?;
+            .bind(did)
+            .bind(email)
+            .bind(code)
+            .execute(p)
+            .await?;
         }
         #[cfg(feature = "postgres")]
         DbPool::Postgres(p) => {
             sqlx::query(
-                "UPDATE atrg_otp_codes SET used = TRUE WHERE did = $1 AND email = $2 AND code = $3"
+                "UPDATE atrg_otp_codes SET used = TRUE WHERE did = $1 AND email = $2 AND code = $3",
             )
-            .bind(did).bind(email).bind(code)
-            .execute(p).await?;
+            .bind(did)
+            .bind(email)
+            .bind(code)
+            .execute(p)
+            .await?;
         }
     }
 
@@ -142,32 +151,53 @@ mod tests {
     async fn test_otp_roundtrip() {
         let pool = atrg_db::connect("sqlite::memory:").await.unwrap();
         if let DbPool::Sqlite(p) = &pool {
-            sqlx::query(crate::CREATE_OTP_TABLE_SQLITE).execute(p).await.unwrap();
+            sqlx::query(crate::CREATE_OTP_TABLE_SQLITE)
+                .execute(p)
+                .await
+                .unwrap();
         }
 
         // Send OTP (dev mode — no SMTP)
-        send_otp(&pool, None, "did:plc:test", "user@example.com").await.unwrap();
+        send_otp(&pool, None, "did:plc:test", "user@example.com")
+            .await
+            .unwrap();
 
         // We can't verify the exact code since it's random, but we can test the flow
         // by inserting a known code directly
         if let DbPool::Sqlite(p) = &pool {
             let expires = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64 + 600;
-            sqlx::query("INSERT INTO atrg_otp_codes (did, email, code, expires_at) VALUES (?1, ?2, ?3, ?4)")
-                .bind("did:plc:test2").bind("test@example.com").bind("123456").bind(expires)
-                .execute(p).await.unwrap();
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+                + 600;
+            sqlx::query(
+                "INSERT INTO atrg_otp_codes (did, email, code, expires_at) VALUES (?1, ?2, ?3, ?4)",
+            )
+            .bind("did:plc:test2")
+            .bind("test@example.com")
+            .bind("123456")
+            .bind(expires)
+            .execute(p)
+            .await
+            .unwrap();
         }
 
         // Verify correct code
-        let result = verify_otp(&pool, "did:plc:test2", "test@example.com", "123456").await.unwrap();
+        let result = verify_otp(&pool, "did:plc:test2", "test@example.com", "123456")
+            .await
+            .unwrap();
         assert!(result);
 
         // Second verification fails (already used)
-        let result = verify_otp(&pool, "did:plc:test2", "test@example.com", "123456").await.unwrap();
+        let result = verify_otp(&pool, "did:plc:test2", "test@example.com", "123456")
+            .await
+            .unwrap();
         assert!(!result);
 
         // Wrong code fails
-        let result = verify_otp(&pool, "did:plc:test2", "test@example.com", "999999").await.unwrap();
+        let result = verify_otp(&pool, "did:plc:test2", "test@example.com", "999999")
+            .await
+            .unwrap();
         assert!(!result);
     }
 }

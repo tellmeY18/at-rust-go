@@ -278,7 +278,7 @@ impl AtrgApp {
 
         let user_migrations = Path::new("./migrations");
         if user_migrations.is_dir() {
-            atrg_db::run_user_migrations(&db, user_migrations).await?;
+            atrg_db::run_isolated_migrations(&db, user_migrations, "_app_migrations").await?;
         }
 
         // 4. Build HTTP client --------------------------------------------------
