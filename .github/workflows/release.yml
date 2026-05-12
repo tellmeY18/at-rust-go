@@ -72,12 +72,18 @@ jobs:
       - name: "Publish Level 0: atrg-codegen"
         run: cargo publish -p atrg-codegen --no-verify || echo "Already published"
 
+      - name: "Publish Level 0: atrg-blob"
+        run: cargo publish -p atrg-blob --no-verify || echo "Already published"
+
       - name: Wait for crates.io index propagation (Level 0 → Level 1)
         run: sleep $PUBLISH_DELAY
 
       # Level 1 — Depends on Level 0
       - name: "Publish Level 1: atrg-core"
         run: cargo publish -p atrg-core --no-verify || echo "Already published"
+
+      - name: "Publish Level 1: atrg-email"
+        run: cargo publish -p atrg-email --no-verify || echo "Already published"
 
       - name: Wait for crates.io index propagation (Level 1 → Level 2)
         run: sleep $PUBLISH_DELAY
@@ -142,7 +148,7 @@ jobs:
             echo "" >> "$GITHUB_OUTPUT"
             echo "| Crate | Version | crates.io |" >> "$GITHUB_OUTPUT"
             echo "|-------|---------|-----------|" >> "$GITHUB_OUTPUT"
-            for crate in atrg-db atrg-identity atrg-stream atrg-firehose atrg-codegen atrg-core atrg-auth atrg-xrpc atrg-cli atrg-repo atrg-feed atrg-label atrg-testing; do
+            for crate in atrg-db atrg-identity atrg-stream atrg-firehose atrg-codegen atrg-blob atrg-core atrg-email atrg-auth atrg-xrpc atrg-cli atrg-repo atrg-feed atrg-label atrg-testing; do
               echo "| \`$crate\` | $VERSION | [crates.io](https://crates.io/crates/$crate) |" >> "$GITHUB_OUTPUT"
             done
             echo "$EOF" >> "$GITHUB_OUTPUT"
