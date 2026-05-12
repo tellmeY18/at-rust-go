@@ -2,6 +2,22 @@
 
 All notable changes to at-rust-go are documented in this file.
 
+## [0.2.2] — 2026-05-12
+
+### Fixed
+- Migration guide: added errata for v0.2.0→v0.2.1 non-exhaustive `DbPool` match fix.
+- Migration guide: documented known integration patterns (domain-specific RBAC, API key schema differences) discovered during changala.app migration.
+
+### Documentation
+- Added `docs/migration.md` — served at `/docs/migration.html` (styled) and `/migration.md` (raw markdown for AI agents).
+- Documented the composable RBAC pattern: framework provides `has_role`/`grant_role` building blocks, apps compose domain-specific helpers on top.
+- Documented API key table schema differences between atrg and pre-existing app implementations.
+
+## [0.2.1] — 2026-05-12
+
+### Fixed
+- Non-exhaustive `DbPool` match in `atrg-email`, `atrg-auth`, `atrg-stream`, `atrg-core` when only one database feature (`sqlite` or `postgres`) is active. Added `#[allow(unreachable_patterns)]` wildcard arms to all 23 match sites across 6 files.
+
 ## [0.2.0] — 2026-05-12
 
 ### Added

@@ -350,7 +350,7 @@ No external dependencies were removed or had breaking version bumps.
 
 ### Complete upgrade checklist
 
-- [ ] Update all `atrg-*` dependencies in Cargo.toml to `"0.2"`
+- [ ] Update all `atrg-*` dependencies in Cargo.toml to `"0.2"` (resolves to latest 0.2.x)
 - [ ] Add `extensions: Arc::new(Extensions::new())` to any direct `AppState` construction (usually only in tests)
 - [ ] Add `admin_dids: vec![]` to any direct `AppConfig` construction (usually only in tests)
 - [ ] Add `cursor: None` to any direct `StreamConfig` construction
@@ -359,3 +359,49 @@ No external dependencies were removed or had breaking version bumps.
 - [ ] Run `cargo build` — fix any remaining compilation errors (the compiler will tell you exactly what's missing)
 - [ ] Run your test suite
 - [ ] Optionally: `DROP TABLE IF EXISTS _sqlx_migrations;` from your database after verifying the upgrade
+
+### Errata
+
+#### v0.2.0 → v0.2.1
+
+`atrg-email`, `atrg-auth`, `atrg-stream`, and `atrg-core` had non-exhaustive `match pool { }` blocks when only one database feature (`sqlite` or `postgres`) was active while `DbPool` still contained both variants. This caused `error[E0004]` at compile time.
+
+Fixed in v0.2.1 by adding `#[allow(unreachable_patterns)] _ => ...` wildcard arms to all 23 match sites across 6 files. If you hit this on v0.2.0, upgrade to `"0.2.1"` or later.
+
+### Known integration patterns (not framework bugs)
+
+These are patterns discovered during changala.app's migration to atrg 0.2.x. They are expected behaviors, not bugs.
+
+#### Domain-specific RBAC stays in the app
+
+`atrg_auth::rbac` provides generic building blocks: `has_role`, `grant_role`, `revoke_role`, `ban_did`, `lift_ban`. But domain-specific authorization logic that combines role checks with business queries (e.g. "is this user the class rep for *this specific course*" or "is this user enrolled in *this course*") must remain in the application. The framework's RBAC is the foundation — the app composes it.
+
+Pattern:
+```rust
+// App-level helper that uses framework RBAC as a building block
+async fn require_class_rep_or_admin(db: &PgPool, did: &str, course_id: i64) -> Result<(), XrpcError> {
+    // Check framework-level admin role first
+    if atrg_auth::rbac::has_role(pool, did, "admin", None).await? {
+        return Ok(());
+    }
+    // Fall back to domain-specific check
+    let is_rep = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM courses WHERE id = $1 AND class_rep_did = $2"
+    ).bind(course_id).bind(did).fetch_one(db).await?;
+    if is_rep > 0 { Ok(()) } else { Err(XrpcError::forbidden("not authorized")) }
+}
+```
+
+#### API key table schema differences
+
+If your app already has an `api_keys` table with a different schema (e.g. TEXT timestamps instead of BIGINT, base64-encoded keys instead of hex), you have two options:
+
+1. **Keep your custom implementation** — the framework's `RequireAuth` extractor detects API keys by prefix pattern (`contains('_')`) and delegates to `atrg_auth::api_keys::find_by_key`. If your table schema differs, keep your own `find_api_key` and middleware.
+
+2. **Migrate your table** — alter columns to match atrg's schema (BIGINT timestamps, hex-encoded keys with `sha256-` prefix hashes), then switch to `atrg_auth::api_keys`.
+
+atrg's API key schema uses:
+- `key_hash`: `sha256-{hex}` (SHA-256 of the full key, hex-encoded with prefix)
+- `expires_at`, `created_at`, `last_used_at`: Unix epoch BIGINT (not RFC3339 TEXT)
+- `scopes`: comma-separated TEXT (not JSON array)
+- Key format: `{prefix}{64 hex chars}` (not base64url)

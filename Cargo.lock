@@ -122,7 +122,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "atrg-auth"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "atrg-core",
@@ -151,7 +151,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-blob"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-cli"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "atrg-codegen",
@@ -181,7 +181,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-codegen"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "convert_case",
@@ -198,7 +198,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "atrg-db",
@@ -228,7 +228,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-db"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "sqlx",
@@ -239,7 +239,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-email"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "atrg-db",
@@ -254,11 +254,11 @@ dependencies = [
 
 [[package]]
 name = "atrg-example-minimal"
-version = "0.2.1"
+version = "0.2.2"
 
 [[package]]
 name = "atrg-feed"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "atrg-auth",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-firehose"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "ciborium",
@@ -297,7 +297,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-identity"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "moka",
@@ -310,7 +310,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-label"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "atrg-core",
@@ -332,7 +332,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-repo"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "atrg-auth",
@@ -351,7 +351,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-stream"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "atrg-db",
@@ -369,7 +369,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-testing"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "atrg-auth",
@@ -389,7 +389,7 @@ dependencies = [
 
 [[package]]
 name = "atrg-xrpc"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "atrg-core",
  "atrg-db",
@@ -2954,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "social-example"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "atrg-auth",
