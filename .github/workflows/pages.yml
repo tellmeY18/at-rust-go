@@ -45,6 +45,9 @@ jobs:
           cp llms.txt _build/llms.txt
           cp llms-full.txt _build/llms-full.txt
 
+          # Migration guide (raw markdown for AI agents)
+          cp docs/migration.md _build/migration.md
+
           # _build/docs/ already populated by build-docs.sh above
 
           # API reference (rustdoc output)

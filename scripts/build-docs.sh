@@ -20,6 +20,7 @@ declare -A TITLES=(
     [xrpc]="XRPC Procedures"
     [codegen]="Lexicon Code Generation"
     [testing]="Testing"
+    [migration]="Migration Guide"
 )
 
 # Ordered sidebar entries
@@ -30,6 +31,7 @@ SIDEBAR_ENTRIES=(
     "xrpc:XRPC"
     "codegen:Code Generation"
     "testing:Testing"
+    "migration:Migration Guide"
 )
 
 for md_file in "$DOCS_DIR"/*.md; do
