@@ -62,21 +62,20 @@ jobs:
         run: |
           cat > /tmp/publish.sh << 'SCRIPT'
           #!/bin/bash
-          set -euo pipefail
+          set -uo pipefail
           CRATE="$1"
           for attempt in 1 2 3; do
             echo "  Attempt $attempt: cargo publish -p $CRATE"
-            if cargo publish -p "$CRATE" --no-verify 2>&1; then
+            OUTPUT=$(cargo publish -p "$CRATE" --no-verify 2>&1) && {
               echo "  ✓ $CRATE published"
               exit 0
-            fi
-            LAST_ERR=$?
-            # Check if it's "already published" (exit code 0 from cargo but
-            # the message says already uploaded)
-            if cargo publish -p "$CRATE" --no-verify 2>&1 | grep -q "already uploaded"; then
-              echo "  ✓ $CRATE already published"
+            }
+            # Check if the crate version already exists (not an error)
+            if echo "$OUTPUT" | grep -qE "already (uploaded|exists)"; then
+              echo "  ✓ $CRATE already published (skipping)"
               exit 0
             fi
+            echo "  Output: $OUTPUT"
             if [ $attempt -lt 3 ]; then
               echo "  ⏳ Waiting 60s before retry..."
               sleep 60
