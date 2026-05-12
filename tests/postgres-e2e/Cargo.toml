@@ -1,0 +1,30 @@
+[package]
+name = "postgres-e2e"
+version = "0.0.0"
+edition = "2021"
+publish = false       # never published to crates.io — integration tests only
+
+[features]
+default = ["postgres"]
+postgres = [
+    "atrg-db/postgres",
+    "atrg-core/postgres",
+    "atrg-auth/postgres",
+    "atrg-stream/postgres",
+    "atrg-email/postgres",
+]
+
+[dependencies]
+atrg-db = { workspace = true }
+atrg-core = { workspace = true }
+atrg-auth = { workspace = true }
+atrg-stream = { workspace = true }
+atrg-email = { workspace = true }
+atrg-identity = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+rand = { workspace = true }
+reqwest = { workspace = true }
+sqlx = { workspace = true, features = ["postgres"] }
+serde_json = { workspace = true }
+axum = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

@@ -48,7 +48,7 @@ jobs:
       # Use --test-threads=1 to avoid env-var race conditions in
       # atrg-core env_override tests (they mutate process-global state).
       - name: Run tests
-        run: cargo test --workspace --all-features -- --test-threads=1
+        run: cargo test --workspace --all-features --exclude postgres-e2e -- --test-threads=1
 
   coverage:
     name: Coverage

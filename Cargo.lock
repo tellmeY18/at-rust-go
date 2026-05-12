@@ -231,19 +231,9 @@ name = "atrg-db"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "atrg-auth",
- "atrg-core",
- "atrg-email",
- "atrg-identity",
- "atrg-stream",
- "axum",
- "rand 0.8.6",
- "reqwest",
- "serde_json",
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
- "tower",
  "tracing",
 ]
 
@@ -2221,6 +2211,25 @@ name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c33a9471896f1c69cecef8d20cbe2f7accd12527ce60845ff44c153bb2a21b49"
+
+[[package]]
+name = "postgres-e2e"
+version = "0.0.0"
+dependencies = [
+ "atrg-auth",
+ "atrg-core",
+ "atrg-db",
+ "atrg-email",
+ "atrg-identity",
+ "atrg-stream",
+ "axum",
+ "rand 0.8.6",
+ "reqwest",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tower",
+]
 
 [[package]]
 name = "potential_utf"

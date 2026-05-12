@@ -94,9 +94,6 @@ jobs:
       - name: "Publish Level 0: atrg-identity"
         run: bash /tmp/publish.sh atrg-identity
 
-      - name: "Publish Level 0: atrg-stream"
-        run: bash /tmp/publish.sh atrg-stream
-
       - name: "Publish Level 0: atrg-firehose"
         run: bash /tmp/publish.sh atrg-firehose
 
@@ -109,9 +106,9 @@ jobs:
       - name: Wait for crates.io index propagation (Level 0 → Level 1)
         run: sleep $PUBLISH_DELAY
 
-      # Level 1 — Depends on Level 0
-      - name: "Publish Level 1: atrg-core"
-        run: bash /tmp/publish.sh atrg-core
+      # Level 1 — Depends only on atrg-db (Level 0)
+      - name: "Publish Level 1: atrg-stream"
+        run: bash /tmp/publish.sh atrg-stream
 
       - name: "Publish Level 1: atrg-email"
         run: bash /tmp/publish.sh atrg-email
@@ -119,30 +116,37 @@ jobs:
       - name: Wait for crates.io index propagation (Level 1 → Level 2)
         run: sleep $PUBLISH_DELAY
 
-      # Level 2 — Depends on Level 0 + Level 1
-      - name: "Publish Level 2: atrg-auth"
-        run: bash /tmp/publish.sh atrg-auth
-
-      - name: "Publish Level 2: atrg-xrpc"
-        run: bash /tmp/publish.sh atrg-xrpc
-
-      - name: "Publish Level 2: atrg-cli"
-        run: bash /tmp/publish.sh atrg-cli
+      # Level 2 — Depends on Level 0 + Level 1 (atrg-core needs stream, identity, db, firehose)
+      - name: "Publish Level 2: atrg-core"
+        run: bash /tmp/publish.sh atrg-core
 
       - name: Wait for crates.io index propagation (Level 2 → Level 3)
         run: sleep $PUBLISH_DELAY
 
-      # Level 3 — Depends on Level 0 + Level 1 + Level 2
-      - name: "Publish Level 3: atrg-repo"
+      # Level 3 — Depends on atrg-core
+      - name: "Publish Level 3: atrg-auth"
+        run: bash /tmp/publish.sh atrg-auth
+
+      - name: "Publish Level 3: atrg-xrpc"
+        run: bash /tmp/publish.sh atrg-xrpc
+
+      - name: "Publish Level 3: atrg-cli"
+        run: bash /tmp/publish.sh atrg-cli
+
+      - name: Wait for crates.io index propagation (Level 3 → Level 4)
+        run: sleep $PUBLISH_DELAY
+
+      # Level 4 — Depends on atrg-auth / atrg-xrpc
+      - name: "Publish Level 4: atrg-repo"
         run: bash /tmp/publish.sh atrg-repo
 
-      - name: "Publish Level 3: atrg-feed"
+      - name: "Publish Level 4: atrg-feed"
         run: bash /tmp/publish.sh atrg-feed
 
-      - name: "Publish Level 3: atrg-label"
+      - name: "Publish Level 4: atrg-label"
         run: bash /tmp/publish.sh atrg-label
 
-      - name: "Publish Level 3: atrg-testing"
+      - name: "Publish Level 4: atrg-testing"
         run: bash /tmp/publish.sh atrg-testing
 
   # Create a GitHub Release with auto-generated notes

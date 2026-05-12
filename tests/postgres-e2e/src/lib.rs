@@ -1,12 +1,14 @@
 //! End-to-end tests for atrg against a real PostgreSQL instance.
 //!
-//! These tests are gated behind the `postgres` feature flag and require
-//! a running PostgreSQL server. Set `TEST_DATABASE_URL` to a valid Postgres
-//! connection string.
+//! These tests require a running PostgreSQL server.
+//! Set `TEST_DATABASE_URL` to a valid Postgres connection string.
 //!
 //! Run locally:
 //!   TEST_DATABASE_URL="postgres://atrg_test@localhost/atrg_test" \
-//!     cargo test --test postgres_e2e --features postgres -- --test-threads=1
+//!     cargo test -p postgres-e2e -- --test-threads=1
+//!
+//! Or use the helper script:
+//!   bash scripts/pg-e2e.sh
 //!
 //! In CI, a Postgres service container is spun up automatically.
 

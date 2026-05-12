@@ -87,9 +87,7 @@ echo "   TEST_DATABASE_URL=$TEST_DATABASE_URL"
 echo ""
 
 cargo test \
-    --package atrg-db \
-    --test postgres_e2e \
-    --features postgres \
+    --package postgres-e2e \
     -- --test-threads=1 \
     "$@"
 

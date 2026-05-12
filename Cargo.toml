@@ -16,6 +16,7 @@ members = [
     "crates/atrg-label",
     "crates/atrg-blob",
     "crates/atrg-email",
+    "tests/postgres-e2e",
     "examples/minimal",
     "examples/social",
 ]
