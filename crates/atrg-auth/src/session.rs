@@ -114,6 +114,8 @@ pub async fn find_session(pool: &DbPool, session_id: &str) -> anyhow::Result<Opt
             .fetch_optional(p)
             .await?
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
 
     // Update last_used_at on access — compute timestamp in Rust so the SQL
@@ -137,6 +139,8 @@ pub async fn find_session(pool: &DbPool, session_id: &str) -> anyhow::Result<Opt
                     .execute(p)
                     .await;
             }
+            #[allow(unreachable_patterns)]
+            _ => anyhow::bail!("no database backend enabled for this operation"),
         }
     }
 
@@ -184,6 +188,8 @@ pub async fn create_session(
             .execute(p)
             .await?;
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     }
 
     tracing::debug!(did = %did, handle = %handle, "session created");
@@ -207,6 +213,8 @@ pub async fn delete_session(pool: &DbPool, session_id: &str) -> anyhow::Result<(
                 .execute(p)
                 .await?;
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     }
     Ok(())
 }
@@ -228,6 +236,8 @@ pub async fn cleanup_expired_sessions(pool: &DbPool) -> anyhow::Result<u64> {
             .execute(p)
             .await?
             .rows_affected(),
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
 
     if deleted > 0 {
@@ -253,6 +263,8 @@ pub async fn cleanup_expired_oauth_states(pool: &DbPool) -> anyhow::Result<u64> 
             .execute(p)
             .await?
             .rows_affected(),
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
 
     Ok(deleted)
@@ -350,6 +362,8 @@ pub async fn save_oauth_state(pool: &DbPool, oauth_state: &OAuthState) -> anyhow
             .execute(p)
             .await?;
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     }
     Ok(())
 }
@@ -382,6 +396,8 @@ pub async fn find_oauth_state(pool: &DbPool, state: &str) -> anyhow::Result<Opti
             .fetch_optional(p)
             .await?
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
     Ok(row.map(OAuthStateRow::into_oauth_state))
 }
@@ -403,6 +419,8 @@ pub async fn delete_oauth_state(pool: &DbPool, state: &str) -> anyhow::Result<()
                 .execute(p)
                 .await?;
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     }
     Ok(())
 }

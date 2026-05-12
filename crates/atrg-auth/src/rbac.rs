@@ -140,6 +140,8 @@ pub async fn has_role(
                     .await?
             }
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
     Ok(count > 0)
 }
@@ -175,6 +177,8 @@ pub async fn is_banned(pool: &DbPool, did: &str) -> anyhow::Result<bool> {
             .fetch_one(p)
             .await?
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
     Ok(count > 0)
 }
@@ -223,6 +227,8 @@ pub async fn ban_did(
             .execute(p)
             .await?;
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     }
     Ok(())
 }
@@ -245,6 +251,8 @@ pub async fn lift_ban(pool: &DbPool, did: &str) -> anyhow::Result<bool> {
             .execute(p)
             .await?
             .rows_affected(),
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
     Ok(rows > 0)
 }
@@ -291,6 +299,8 @@ pub async fn grant_role(
             .execute(p)
             .await?;
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     }
     Ok(())
 }
@@ -347,6 +357,8 @@ pub async fn revoke_role(
                     .rows_affected()
             }
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
     Ok(rows > 0)
 }

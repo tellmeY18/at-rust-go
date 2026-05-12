@@ -41,6 +41,8 @@ pub async fn load_cursor(pool: &DbPool, consumer_id: &str) -> anyhow::Result<Opt
                 .fetch_optional(p)
                 .await?
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
     Ok(result)
 }
@@ -79,6 +81,8 @@ pub async fn save_cursor(pool: &DbPool, consumer_id: &str, time_us: i64) -> anyh
             .execute(p)
             .await?;
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     }
     Ok(())
 }
@@ -97,6 +101,8 @@ pub async fn ensure_cursor_table(pool: &DbPool) -> anyhow::Result<()> {
         DbPool::Postgres(p) => {
             sqlx::query(CREATE_CURSOR_TABLE_POSTGRES).execute(p).await?;
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     }
     tracing::debug!("ensured atrg_jetstream_cursors table exists");
     Ok(())

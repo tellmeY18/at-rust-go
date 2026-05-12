@@ -53,6 +53,8 @@ pub async fn send_otp(
             .execute(p)
             .await?;
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     }
 
     // Send email (or log in dev mode)
@@ -92,6 +94,8 @@ pub async fn verify_otp(pool: &DbPool, did: &str, email: &str, code: &str) -> an
             .bind(did).bind(email).bind(code).bind(now)
             .fetch_one(p).await?
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
 
     if valid == 0 {
@@ -122,6 +126,8 @@ pub async fn verify_otp(pool: &DbPool, did: &str, email: &str, code: &str) -> an
             .execute(p)
             .await?;
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     }
 
     Ok(true)

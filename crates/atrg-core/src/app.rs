@@ -319,6 +319,8 @@ impl AtrgApp {
                             "INSERT INTO atrg_roles (did, role, granted_by, granted_at) VALUES ($1, 'admin', 'system:bootstrap', $2) ON CONFLICT DO NOTHING"
                         ).bind(did).bind(&now).execute(p).await.map(|_| ())
                     }
+                    #[allow(unreachable_patterns)]
+                    _ => Ok(()),
                 };
                 match result {
                     Ok(_) => tracing::info!(did = %did, "auto-provisioned admin DID"),

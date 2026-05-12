@@ -223,6 +223,8 @@ pub async fn create_api_key(
             .await?;
             row.0
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
 
     let api_key = ApiKey {
@@ -273,6 +275,8 @@ pub async fn find_by_key(pool: &DbPool, full_key: &str) -> anyhow::Result<Option
             .fetch_optional(p)
             .await?
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
 
     // Update last_used_at on successful lookup.
@@ -295,6 +299,8 @@ pub async fn find_by_key(pool: &DbPool, full_key: &str) -> anyhow::Result<Option
                     .execute(p)
                     .await;
             }
+            #[allow(unreachable_patterns)]
+            _ => anyhow::bail!("no database backend enabled for this operation"),
         }
     }
 
@@ -345,6 +351,8 @@ pub async fn list_api_keys(pool: &DbPool, did: Option<&str>) -> anyhow::Result<V
             .fetch_all(p)
             .await?
         }
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
 
     Ok(rows.into_iter().map(ApiKeyRow::into_api_key).collect())
@@ -367,6 +375,8 @@ pub async fn revoke_api_key(pool: &DbPool, key_prefix: &str) -> anyhow::Result<b
             .execute(p)
             .await?
             .rows_affected(),
+        #[allow(unreachable_patterns)]
+        _ => anyhow::bail!("no database backend enabled for this operation"),
     };
 
     if rows_affected > 0 {
