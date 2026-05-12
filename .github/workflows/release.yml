@@ -8,7 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # Delay between publishing dependent crates to allow crates.io index propagation
-  PUBLISH_DELAY: 30
+  PUBLISH_DELAY: 90
 
 jobs:
   # Gate: ensure the workspace builds and tests pass before publishing
@@ -56,63 +56,94 @@ jobs:
       - name: Authenticate with crates.io
         run: cargo login "${{ secrets.CARGO_REGISTRY_TOKEN }}"
 
+      # Helper: publish with retry. crates.io index propagation can take
+      # up to 2 minutes; retry 3 times with 60s waits before giving up.
+      - name: Create publish helper
+        run: |
+          cat > /tmp/publish.sh << 'SCRIPT'
+          #!/bin/bash
+          set -euo pipefail
+          CRATE="$1"
+          for attempt in 1 2 3; do
+            echo "  Attempt $attempt: cargo publish -p $CRATE"
+            if cargo publish -p "$CRATE" --no-verify 2>&1; then
+              echo "  ✓ $CRATE published"
+              exit 0
+            fi
+            LAST_ERR=$?
+            # Check if it's "already published" (exit code 0 from cargo but
+            # the message says already uploaded)
+            if cargo publish -p "$CRATE" --no-verify 2>&1 | grep -q "already uploaded"; then
+              echo "  ✓ $CRATE already published"
+              exit 0
+            fi
+            if [ $attempt -lt 3 ]; then
+              echo "  ⏳ Waiting 60s before retry..."
+              sleep 60
+            fi
+          done
+          echo "  ✗ $CRATE failed after 3 attempts"
+          exit 1
+          SCRIPT
+          chmod +x /tmp/publish.sh
+
       # Level 0 — Leaf crates (no internal dependencies)
       - name: "Publish Level 0: atrg-db"
-        run: cargo publish -p atrg-db --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-db
 
       - name: "Publish Level 0: atrg-identity"
-        run: cargo publish -p atrg-identity --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-identity
 
       - name: "Publish Level 0: atrg-stream"
-        run: cargo publish -p atrg-stream --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-stream
 
       - name: "Publish Level 0: atrg-firehose"
-        run: cargo publish -p atrg-firehose --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-firehose
 
       - name: "Publish Level 0: atrg-codegen"
-        run: cargo publish -p atrg-codegen --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-codegen
 
       - name: "Publish Level 0: atrg-blob"
-        run: cargo publish -p atrg-blob --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-blob
 
       - name: Wait for crates.io index propagation (Level 0 → Level 1)
         run: sleep $PUBLISH_DELAY
 
       # Level 1 — Depends on Level 0
       - name: "Publish Level 1: atrg-core"
-        run: cargo publish -p atrg-core --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-core
 
       - name: "Publish Level 1: atrg-email"
-        run: cargo publish -p atrg-email --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-email
 
       - name: Wait for crates.io index propagation (Level 1 → Level 2)
         run: sleep $PUBLISH_DELAY
 
       # Level 2 — Depends on Level 0 + Level 1
       - name: "Publish Level 2: atrg-auth"
-        run: cargo publish -p atrg-auth --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-auth
 
       - name: "Publish Level 2: atrg-xrpc"
-        run: cargo publish -p atrg-xrpc --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-xrpc
 
       - name: "Publish Level 2: atrg-cli"
-        run: cargo publish -p atrg-cli --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-cli
 
       - name: Wait for crates.io index propagation (Level 2 → Level 3)
         run: sleep $PUBLISH_DELAY
 
       # Level 3 — Depends on Level 0 + Level 1 + Level 2
       - name: "Publish Level 3: atrg-repo"
-        run: cargo publish -p atrg-repo --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-repo
 
       - name: "Publish Level 3: atrg-feed"
-        run: cargo publish -p atrg-feed --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-feed
 
       - name: "Publish Level 3: atrg-label"
-        run: cargo publish -p atrg-label --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-label
 
       - name: "Publish Level 3: atrg-testing"
-        run: cargo publish -p atrg-testing --no-verify || echo "Already published"
+        run: bash /tmp/publish.sh atrg-testing
 
   # Create a GitHub Release with auto-generated notes
   github-release:
