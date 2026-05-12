@@ -25,12 +25,10 @@ fn test_db_url() -> Option<String> {
 /// Macro that skips (returns Ok) when Postgres is unavailable.
 macro_rules! require_pg {
     () => {
-        let Some(base_url) = test_db_url() else {
+        if test_db_url().is_none() {
             eprintln!("  skipping (TEST_DATABASE_URL not set)");
             return;
-        };
-        #[allow(unused_variables)]
-        let base_url = base_url;
+        }
     };
 }
 
