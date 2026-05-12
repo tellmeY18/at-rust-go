@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>atrg — Build AT Protocol apps in Rust. Ship in minutes.</title>
+<meta name="description" content="A batteries-included Rust backend framework for federated social applications on the AT Protocol. OAuth, Jetstream, XRPC, and code generation — all wired up.">
+<meta name="theme-color" content="#0d1117">
+<meta property="og:title" content="atrg — AT Protocol Backend Framework for Rust">
+<meta property="og:description" content="Build federated social apps in Rust. OAuth, Jetstream, XRPC, code generation. Ship in minutes.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tellmeY18.github.io/at-rust-go/">
+<link rel="canonical" href="https://tellmeY18.github.io/at-rust-go/">
+<style>
+/* ── Reset & Base ────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #0d1117;
+  --bg-card:     #161b22;
+  --bg-code:     #1c2128;
+  --text:        #e6edf3;
+  --text-muted:  #8b949e;
+  --accent:      #58a6ff;
+  --accent2:     #bc8cff;
+  --border:      #30363d;
+  --radius:      8px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+          Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", monospace;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
+}
+
+a { color: var(--accent); text-decoration: none; transition: color .15s; }
+a:hover { color: var(--accent2); }
+
+img { max-width: 100%; display: block; }
+code { font-family: var(--font-mono); }
+
+/* ── Layout ──────────────────────────────────────────────────────── */
+.container {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+section { padding: 80px 0; }
+
+.section-label {
+  font-size: .8rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 8px;
+}
+
+.section-title {
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1.2;
+  margin-bottom: 16px;
+}
+
+.section-subtitle {
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  max-width: 640px;
+  margin-bottom: 48px;
+}
+
+/* ── Navigation ──────────────────────────────────────────────────── */
+nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: rgba(13, 17, 23, .85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+}
+
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+.nav-brand:hover { color: var(--text); }
+
+.nav-brand-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  border-radius: 6px;
+  font-size: .85rem;
+  color: #fff;
+  font-weight: 900;
+}
+
+.nav-links { display: flex; align-items: center; gap: 8px; list-style: none; }
+
+.nav-links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: .875rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-radius: 6px;
+  transition: color .15s, background .15s;
+}
+
+.nav-links a:hover { color: var(--text); background: rgba(255,255,255,.06); }
+
+.nav-links .gh-link {
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.nav-links .gh-link:hover { border-color: var(--text-muted); }
+
+.nav-hamburger {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--text);
+  cursor: pointer;
+  padding: 4px;
+}
+
+.nav-hamburger svg { display: block; }
+
+/* ── Hero ────────────────────────────────────────────────────────── */
+.hero {
+  padding: 100px 0 80px;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle radial glow behind hero */
+.hero::before {
+  content: "";
+  position: absolute;
+  top: -180px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 900px;
+  height: 600px;
+  background: radial-gradient(ellipse, rgba(88,166,255,.10) 0%, rgba(188,140,255,.06) 40%, transparent 70%);
+  pointer-events: none;
+}
+
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(88,166,255,.08);
+  border: 1px solid rgba(88,166,255,.2);
+  border-radius: 100px;
+  margin-bottom: 32px;
+}
+
+.hero-badge .pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .5; transform: scale(1.3); }
+}
+
+.hero h1 {
+  font-size: clamp(2.4rem, 5.5vw, 3.75rem);
+  font-weight: 900;
+  line-height: 1.1;
+  letter-spacing: -.03em;
+  margin-bottom: 24px;
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.hero h1 .gradient {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.hero-sub {
+  font-size: 1.15rem;
+  color: var(--text-muted);
+  max-width: 640px;
+  margin: 0 auto 40px;
+  line-height: 1.7;
+}
+
+/* Quick-start terminal */
+.hero-terminal {
+  max-width: 480px;
+  margin: 0 auto 40px;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  text-align: left;
+}
+
+.terminal-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: rgba(255,255,255,.03);
+  border-bottom: 1px solid var(--border);
+}
+
+.terminal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.terminal-dot:nth-child(1) { background: #f85149; }
+.terminal-dot:nth-child(2) { background: #d29922; }
+.terminal-dot:nth-child(3) { background: #3fb950; }
+
+.terminal-title {
+  flex: 1;
+  text-align: center;
+  font-size: .75rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.terminal-body {
+  padding: 16px 20px;
+  font-family: var(--font-mono);
+  font-size: .875rem;
+  line-height: 1.8;
+}
+
+.terminal-body .prompt { color: var(--accent); user-select: none; }
+.terminal-body .cmd { color: var(--text); }
+.terminal-body .arg { color: var(--accent2); }
+
+.hero-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 28px;
+  font-size: .95rem;
+  font-weight: 600;
+  border-radius: var(--radius);
+  border: none;
+  cursor: pointer;
+  transition: transform .1s, box-shadow .2s, opacity .15s;
+  text-decoration: none;
+}
+
+.btn:active { transform: scale(.98); }
+
+.btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff;
+  box-shadow: 0 4px 24px rgba(88,166,255,.25);
+}
+
+.btn-primary:hover { color: #fff; opacity: .9; box-shadow: 0 6px 32px rgba(88,166,255,.35); }
+
+.btn-secondary {
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover { color: var(--text); border-color: var(--text-muted); }
+
+.btn-secondary svg { width: 18px; height: 18px; }
+
+/* ── Features ────────────────────────────────────────────────────── */
+#features { border-top: 1px solid var(--border); }
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+
+.feature-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  transition: border-color .2s, transform .2s;
+}
+
+.feature-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.feature-card.v2:hover { border-color: var(--accent2); }
+
+.feature-icon {
+  font-size: 1.6rem;
+  margin-bottom: 12px;
+  display: block;
+  width: 44px;
+  height: 44px;
+  line-height: 44px;
+  text-align: center;
+  border-radius: 10px;
+  background: rgba(88,166,255,.08);
+}
+
+.feature-card.v2 .feature-icon { background: rgba(188,140,255,.08); }
+
+.feature-card h3 {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.feature-card p {
+  font-size: .9rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.feature-version-label {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.feature-version-label span {
+  font-size: .75rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent2);
+  white-space: nowrap;
+}
+
+.feature-version-label::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+/* ── Code Example ────────────────────────────────────────────────── */
+#code { border-top: 1px solid var(--border); }
+
+.code-split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  align-items: center;
+}
+
+.code-info h2 {
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1.2;
+  margin-bottom: 16px;
+}
+
+.code-info p {
+  font-size: 1.05rem;
+  color: var(--text-muted);
+  line-height: 1.7;
+  margin-bottom: 24px;
+}
+
+.code-info ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.code-info li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: .95rem;
+  color: var(--text-muted);
+}
+
+.code-info li .check {
+  color: #3fb950;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.code-block {
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(255,255,255,.03);
+  border-bottom: 1px solid var(--border);
+}
+
+.code-block-file {
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  color: var(--text-muted);
+}
+
+.code-block-lang {
+  font-size: .7rem;
+  font-weight: 600;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--accent2);
+  padding: 2px 8px;
+  background: rgba(188,140,255,.1);
+  border-radius: 4px;
+}
+
+.code-block pre {
+  padding: 20px;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: .85rem;
+  line-height: 1.7;
+  tab-size: 4;
+}
+
+/* Syntax tokens — CSS-only highlighting */
+.kw   { color: #ff7b72; }   /* keywords: use, mod, async, fn, pub */
+.ty   { color: #79c0ff; }   /* types: AtrgApp, Result */
+.fn   { color: #d2a8ff; }   /* function calls */
+.str  { color: #a5d6ff; }   /* strings */
+.mac  { color: #ffa657; }   /* macros */
+.cm   { color: #8b949e; font-style: italic; }  /* comments */
+.attr { color: #ffa657; }   /* attributes */
+.op   { color: #e6edf3; }   /* operators */
+.lt   { color: #a5d6ff; }   /* literals */
+
+/* ── Architecture ────────────────────────────────────────────────── */
+#architecture { border-top: 1px solid var(--border); }
+
+.arch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+}
+
+.arch-item {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 14px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  transition: border-color .15s;
+}
+
+.arch-item:hover { border-color: var(--accent); }
+
+.arch-name {
+  font-family: var(--font-mono);
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.arch-desc {
+  font-size: .85rem;
+  color: var(--text-muted);
+}
+
+/* ── What's In The Box ───────────────────────────────────────────── */
+#box { border-top: 1px solid var(--border); }
+
+.box-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+
+.box-col {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+}
+
+.box-col-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.box-col-icon {
+  font-size: 1.25rem;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+
+.box-col:first-child .box-col-icon {
+  background: rgba(88,166,255,.1);
+}
+
+.box-col:last-child .box-col-icon {
+  background: rgba(188,140,255,.1);
+}
+
+.box-col-header h3 {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.box-col-header small {
+  display: block;
+  font-size: .8rem;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.box-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.box-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: .9rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.box-list .icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  font-size: .9rem;
+}
+
+.box-col:first-child .icon { color: var(--accent); }
+.box-col:last-child .icon { color: var(--accent2); }
+
+/* ── CTA ─────────────────────────────────────────────────────────── */
+.cta {
+  border-top: 1px solid var(--border);
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.cta::before {
+  content: "";
+  position: absolute;
+  bottom: -120px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 800px;
+  height: 400px;
+  background: radial-gradient(ellipse, rgba(188,140,255,.08) 0%, rgba(88,166,255,.04) 50%, transparent 70%);
+  pointer-events: none;
+}
+
+.cta h2 {
+  font-size: 2.2rem;
+  font-weight: 800;
+  margin-bottom: 12px;
+}
+
+.cta p {
+  font-size: 1.1rem;
+  color: var(--text-muted);
+  margin-bottom: 32px;
+  max-width: 500px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.cta-install {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  background: var(--bg-code);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: .9rem;
+  color: var(--text);
+  margin-bottom: 32px;
+}
+
+.cta-install .prompt { color: var(--accent); user-select: none; }
+
+/* ── Footer ──────────────────────────────────────────────────────── */
+footer {
+  border-top: 1px solid var(--border);
+  padding: 40px 0;
+}
+
+.footer-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.footer-left {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: .85rem;
+  color: var(--text-muted);
+}
+
+.footer-links {
+  display: flex;
+  gap: 20px;
+  list-style: none;
+}
+
+.footer-links a {
+  font-size: .85rem;
+  color: var(--text-muted);
+  transition: color .15s;
+}
+
+.footer-links a:hover { color: var(--text); }
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .feature-grid { grid-template-columns: repeat(2, 1fr); }
+  .code-split { grid-template-columns: 1fr; gap: 32px; }
+  .box-columns { grid-template-columns: 1fr; }
+  section { padding: 60px 0; }
+}
+
+@media (max-width: 640px) {
+  .feature-grid { grid-template-columns: 1fr; }
+
+  .nav-links { display: none; }
+  .nav-hamburger { display: block; }
+
+  .nav-links.open {
+    display: flex;
+    flex-direction: column;
+    position: absolute;
+    top: 64px;
+    left: 0;
+    right: 0;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    gap: 4px;
+  }
+
+  .nav-links.open a {
+    padding: 12px 14px;
+    width: 100%;
+  }
+
+  .hero { padding: 60px 0; }
+  .hero h1 { font-size: 2rem; }
+  .hero-sub { font-size: 1rem; }
+  .terminal-body { font-size: .78rem; }
+
+  .arch-grid { grid-template-columns: 1fr; }
+
+  .section-title { font-size: 1.6rem; }
+
+  .footer-inner { flex-direction: column; align-items: flex-start; }
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Selection ───────────────────────────────────────────────────── */
+::selection { background: rgba(88,166,255,.3); color: #fff; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- Navigation                                                      -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<nav>
+  <div class="container nav-inner">
+    <a href="/at-rust-go/" class="nav-brand">
+      <span class="nav-brand-icon">at</span>
+      atrg
+    </a>
+    <button class="nav-hamburger" onclick="document.querySelector('.nav-links').classList.toggle('open')" aria-label="Toggle menu">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="/at-rust-go/docs/getting-started.html">Docs</a></li>
+      <li><a href="/at-rust-go/api/atrg_core/">API Reference</a></li>
+      <li><a href="/at-rust-go/llms.txt">llms.txt</a></li>
+      <li>
+        <a href="https://github.com/tellmeY18/at-rust-go" class="gh-link" rel="noopener">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- Hero                                                            -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge">
+      <span class="pulse"></span>
+      Pre-release &mdash; building in public
+    </div>
+
+    <h1>
+      Build AT Protocol apps in Rust.<br>
+      <span class="gradient">Ship in minutes.</span>
+    </h1>
+
+    <p class="hero-sub">
+      A batteries-included backend framework for federated social applications.
+      OAuth, Jetstream, XRPC, and code generation &mdash; all wired up.
+      Bring your own frontend.
+    </p>
+
+    <div class="hero-terminal">
+      <div class="terminal-bar">
+        <span class="terminal-dot"></span>
+        <span class="terminal-dot"></span>
+        <span class="terminal-dot"></span>
+        <span class="terminal-title">Terminal</span>
+      </div>
+      <div class="terminal-body">
+        <div><span class="prompt">$ </span><span class="cmd">cargo install </span><span class="arg">atrg-cli</span></div>
+        <div><span class="prompt">$ </span><span class="cmd">atrg new </span><span class="arg">my-app</span></div>
+        <div><span class="prompt">$ </span><span class="cmd">cd </span><span class="arg">my-app</span><span class="cmd"> && atrg dev</span></div>
+      </div>
+    </div>
+
+    <div class="hero-buttons">
+      <a href="/at-rust-go/docs/getting-started.html" class="btn btn-primary">Get Started</a>
+      <a href="https://github.com/tellmeY18/at-rust-go" class="btn btn-secondary" rel="noopener">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- Features                                                        -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="features">
+  <div class="container">
+    <div class="section-label">Features</div>
+    <h2 class="section-title">Everything you need to ship an AT Protocol backend</h2>
+    <p class="section-subtitle">
+      atrg handles the protocol plumbing so you can focus on your app's business logic.
+      No boilerplate, no guesswork.
+    </p>
+
+    <div class="feature-grid">
+      <!-- v0.1 -->
+      <div class="feature-card">
+        <span class="feature-icon">&#x1F510;</span>
+        <h3>OAuth</h3>
+        <p>AT Protocol OAuth PKCE + DPoP flow. Login, sessions, JWT verification. Zero configuration.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x26A1;</span>
+        <h3>Jetstream</h3>
+        <p>Real-time event streaming with bounded backpressure, auto-reconnection, and lag detection.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1F50C;</span>
+        <h3>XRPC</h3>
+        <p>AT Protocol RPC endpoints with typed error envelopes and lexicon-driven code generation.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1F4E6;</span>
+        <h3>Codegen</h3>
+        <p>Generate Rust types and Axum route stubs from your lexicon JSON files.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1F4E1;</span>
+        <h3>Feed Generator</h3>
+        <p>Build custom feeds. Register algorithms, atrg handles the protocol.</p>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">&#x1F3F7;&#xFE0F;</span>
+        <h3>Labeler</h3>
+        <p>Run a label service. Create, sign, and serve labels per the AT Protocol spec.</p>
+      </div>
+
+      <!-- v0.2 divider -->
+      <div class="feature-version-label">
+        <span>v0.2.0 &mdash; Coming Soon</span>
+      </div>
+
+      <div class="feature-card v2">
+        <span class="feature-icon">&#x1F5C4;&#xFE0F;</span>
+        <h3>Postgres + SQLite</h3>
+        <p>Dual database backends. Feature-flagged. Production-ready.</p>
+      </div>
+      <div class="feature-card v2">
+        <span class="feature-icon">&#x1F511;</span>
+        <h3>API Keys + RBAC</h3>
+        <p>Native API key auth, role-based access control, ban system.</p>
+      </div>
+      <div class="feature-card v2">
+        <span class="feature-icon">&#x1F4C1;</span>
+        <h3>Blob Storage</h3>
+        <p>Content-addressed S3 + filesystem storage for user content.</p>
+      </div>
+      <div class="feature-card v2">
+        <span class="feature-icon">&#x1F9E9;</span>
+        <h3>Multi-Binary</h3>
+        <p>Scaffold write server + read aggregator from one workspace.</p>
+      </div>
+      <div class="feature-card v2">
+        <span class="feature-icon">&#x1F4E7;</span>
+        <h3>Email / OTP</h3>
+        <p>SMTP email delivery and OTP verification built-in.</p>
+      </div>
+      <div class="feature-card v2">
+        <span class="feature-icon">&#x1F504;</span>
+        <h3>Event Router</h3>
+        <p>Typed dispatch for Jetstream events by collection and operation.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- Code Example                                                    -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="code">
+  <div class="container">
+    <div class="code-split">
+
+      <div class="code-info">
+        <div class="section-label">Quick Start</div>
+        <h2>Hello, AT Protocol!</h2>
+        <p>
+          A complete AT Protocol API server in 10 lines of Rust.
+          OAuth login, session management, and JSON API routes &mdash;
+          ready to serve your frontend.
+        </p>
+        <ul>
+          <li><span class="check">&#x2713;</span> OAuth login + session cookies out of the box</li>
+          <li><span class="check">&#x2713;</span> Axum router &mdash; add routes like any Axum app</li>
+          <li><span class="check">&#x2713;</span> SQLite database with auto-migrations</li>
+          <li><span class="check">&#x2713;</span> <code>atrg.toml</code> drives all configuration</li>
+          <li><span class="check">&#x2713;</span> Jetstream streaming with one method call</li>
+        </ul>
+      </div>
+
+      <div class="code-block">
+        <div class="code-block-header">
+          <span class="code-block-file">src/main.rs</span>
+          <span class="code-block-lang">Rust</span>
+        </div>
+<pre><span class="kw">use</span> <span class="ty">atrg_core</span>::<span class="ty">AtrgApp</span>;
+
+<span class="kw">mod</span> routes;
+
+<span class="attr">#[tokio::main]</span>
+<span class="kw">async fn</span> <span class="fn">main</span>() -> <span class="ty">anyhow</span>::<span class="ty">Result</span>&lt;()&gt; {
+    <span class="ty">AtrgApp</span>::<span class="fn">new</span>()
+        .<span class="fn">with_auth_routes</span>(<span class="ty">atrg_auth</span>::routes::<span class="fn">auth_router</span>())
+        .<span class="fn">mount</span>(routes::<span class="fn">api</span>())
+        .<span class="fn">run</span>()
+        .<span class="kw">await</span>
+}</pre>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- Architecture                                                    -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="architecture">
+  <div class="container">
+    <div class="section-label">Architecture</div>
+    <h2 class="section-title">Modular by design</h2>
+    <p class="section-subtitle">
+      14 focused crates in a Cargo workspace. Use what you need, ignore the rest.
+      Every crate has a single responsibility.
+    </p>
+
+    <div class="arch-grid">
+      <div class="arch-item">
+        <span class="arch-name">atrg-core</span>
+        <span class="arch-desc">AppState, Config, app builder</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-auth</span>
+        <span class="arch-desc">OAuth, sessions, JWT, API keys, RBAC</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-db</span>
+        <span class="arch-desc">SQLite + Postgres pool, isolated migrations</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-xrpc</span>
+        <span class="arch-desc">XRPC route helpers + error envelope</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-stream</span>
+        <span class="arch-desc">Jetstream consumer + EventRouter</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-identity</span>
+        <span class="arch-desc">DID/handle resolution with cache</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-repo</span>
+        <span class="arch-desc">Record CRUD, blobs, AT-URIs, TID</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-codegen</span>
+        <span class="arch-desc">Lexicon &rarr; Rust code generator</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-blob</span>
+        <span class="arch-desc">Content-addressed blob storage</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-email</span>
+        <span class="arch-desc">SMTP email + OTP verification</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-feed</span>
+        <span class="arch-desc">Feed generator framework</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-label</span>
+        <span class="arch-desc">Labeler framework</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-testing</span>
+        <span class="arch-desc">Test utilities</span>
+      </div>
+      <div class="arch-item">
+        <span class="arch-name">atrg-cli</span>
+        <span class="arch-desc">The <code>atrg</code> binary</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- What's In The Box                                               -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section id="box">
+  <div class="container">
+    <div class="section-label">What's In The Box</div>
+    <h2 class="section-title">atrg handles the hard parts</h2>
+    <p class="section-subtitle">
+      You focus on your app's business logic. atrg handles the AT Protocol plumbing.
+    </p>
+
+    <div class="box-columns">
+      <div class="box-col">
+        <div class="box-col-header">
+          <span class="box-col-icon">&#x1F4E6;</span>
+          <h3>atrg handles<small>Protocol, infrastructure, plumbing</small></h3>
+        </div>
+        <ul class="box-list">
+          <li><span class="icon">&#x2713;</span> OAuth PKCE + DPoP login flow</li>
+          <li><span class="icon">&#x2713;</span> Session management + token refresh</li>
+          <li><span class="icon">&#x2713;</span> DID/handle resolution + caching</li>
+          <li><span class="icon">&#x2713;</span> AT Protocol JWT verification</li>
+          <li><span class="icon">&#x2713;</span> XRPC error envelopes per spec</li>
+          <li><span class="icon">&#x2713;</span> Jetstream consumer with backpressure</li>
+          <li><span class="icon">&#x2713;</span> Database migrations (SQLite + Postgres)</li>
+          <li><span class="icon">&#x2713;</span> Lexicon-to-Rust code generation</li>
+          <li><span class="icon">&#x2713;</span> CORS, security headers, content-type</li>
+          <li><span class="icon">&#x2713;</span> Client metadata + well-known endpoints</li>
+        </ul>
+      </div>
+
+      <div class="box-col">
+        <div class="box-col-header">
+          <span class="box-col-icon">&#x1F528;</span>
+          <h3>You build<small>Your app's unique value</small></h3>
+        </div>
+        <ul class="box-list">
+          <li><span class="icon">&#x25B8;</span> Your lexicon definitions (JSON)</li>
+          <li><span class="icon">&#x25B8;</span> Business logic in Axum handlers</li>
+          <li><span class="icon">&#x25B8;</span> Database schemas for your domain</li>
+          <li><span class="icon">&#x25B8;</span> Feed algorithms</li>
+          <li><span class="icon">&#x25B8;</span> Labeling policies</li>
+          <li><span class="icon">&#x25B8;</span> Jetstream event processing logic</li>
+          <li><span class="icon">&#x25B8;</span> Your frontend (web, mobile, native)</li>
+          <li><span class="icon">&#x25B8;</span> Deployment &amp; infrastructure</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- CTA                                                             -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<section class="cta">
+  <div class="container">
+    <h2>Ready to build?</h2>
+    <p>
+      Get a working AT Protocol API server in under five minutes.
+    </p>
+    <div class="cta-install">
+      <span class="prompt">$</span> cargo install atrg-cli
+    </div>
+    <br>
+    <div class="hero-buttons">
+      <a href="/at-rust-go/docs/getting-started.html" class="btn btn-primary">Read the Docs</a>
+      <a href="https://github.com/tellmeY18/at-rust-go" class="btn btn-secondary" rel="noopener">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Star on GitHub
+      </a>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<!-- Footer                                                          -->
+<!-- ═══════════════════════════════════════════════════════════════ -->
+<footer>
+  <div class="container footer-inner">
+    <div class="footer-left">
+      <span>LGPL-3.0-only</span>
+      <span>&middot;</span>
+      <span>Built with Rust + Axum + AT Protocol</span>
+    </div>
+    <ul class="footer-links">
+      <li><a href="https://github.com/tellmeY18/at-rust-go" rel="noopener">GitHub</a></li>
+      <li><a href="https://crates.io/crates/atrg-cli" rel="noopener">crates.io</a></li>
+      <li><a href="/at-rust-go/api/atrg_core/">API Docs</a></li>
+      <li><a href="/at-rust-go/llms.txt">llms.txt</a></li>
+    </ul>
+  </div>
+</footer>
+
+</body>
+</html>
+""""
