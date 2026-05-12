@@ -48,7 +48,7 @@ impl fmt::Display for Operation {
 /// A typed commit event with extracted fields for handler convenience.
 ///
 /// This is the value passed to each route handler. It contains all the
-/// information from the raw [`JetstreamEvent`] and [`CommitData`] in a
+/// information from the raw [`JetstreamEvent`] and commit data in a
 /// flat, ergonomic structure.
 #[derive(Debug, Clone)]
 pub struct CommitEvent {
@@ -81,11 +81,11 @@ struct Route<S> {
     handler: RouteHandler<S>,
 }
 
-/// Builder for constructing an [`EventRouter`].
+/// Builder for constructing an event router.
 ///
 /// Use the `on_create`, `on_update`, `on_delete`, and `on` methods to
 /// register handlers, then call [`build`](Self::build) to produce a
-/// dispatch function compatible with [`AtrgApp::on_event`](crate::EventHandler).
+/// dispatch function compatible with `AtrgApp::on_event`.
 pub struct EventRouterBuilder<S> {
     routes: Vec<Route<S>>,
 }

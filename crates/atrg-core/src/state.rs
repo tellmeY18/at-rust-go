@@ -31,8 +31,8 @@ use atrg_identity::IdentityResolver;
 /// ext.insert(S3Client { bucket: "my-blobs".into() });
 /// ext.insert(SmtpConfig { host: "smtp.example.com".into() });
 ///
-/// assert_eq!(ext.get::<S3Client>().unwrap().bucket, "my-blobs");
-/// assert_eq!(ext.get::<SmtpConfig>().unwrap().host, "smtp.example.com");
+/// assert_eq!(ext.get::<S3Client>().expect("registered").bucket, "my-blobs");
+/// assert_eq!(ext.get::<SmtpConfig>().expect("registered").host, "smtp.example.com");
 /// assert!(ext.get::<u64>().is_none());
 /// ```
 #[derive(Default)]
