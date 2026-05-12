@@ -5,12 +5,15 @@
 //! Provides OAuth login/callback/logout routes, session management,
 //! AT Protocol JWT verification, and `AuthUser`/`RequireAuth` extractors.
 
+pub mod api_keys;
 pub mod extractor;
 pub mod jwt;
 pub mod oauth;
+pub mod rbac;
 pub mod routes;
 pub mod session;
 
+pub use api_keys::ApiKey;
 pub use extractor::{AuthUser, RequireAuth};
 pub use session::{AtrgSession, AuthSource, OAuthState};
 

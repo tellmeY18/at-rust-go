@@ -1,0 +1,22 @@
+use atrg_core::AppState;
+use atrg_auth::RequireAuth;
+use axum::{Router, routing::{get, post}, Json};
+use serde_json::json;
+
+pub fn api() -> Router<AppState> {
+    Router::new()
+        .route("/", get(index))
+        .route("/api/health", get(health))
+}
+
+async fn index() -> Json<serde_json::Value> {
+    Json(json!({
+        "name": "{{name}}-server",
+        "description": "Write server for {{name}}",
+        "status": "ok"
+    }))
+}
+
+async fn health() -> Json<serde_json::Value> {
+    Json(json!({ "healthy": true }))
+}

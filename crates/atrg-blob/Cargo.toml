@@ -1,0 +1,25 @@
+[package]
+name = "atrg-blob"
+description = "Content-addressed blob storage for at-rust-go (S3 + filesystem backends)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+sha2 = "0.10"
+hex = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
+async-trait = "0.1"
+
+# S3 backend (optional, default on)
+rust-s3 = { version = "0.35", optional = true }
+
+[features]
+default = ["s3"]
+s3 = ["dep:rust-s3"]

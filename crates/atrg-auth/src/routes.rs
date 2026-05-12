@@ -22,6 +22,22 @@ use crate::extractor::RequireAuth;
 use crate::oauth;
 use crate::session;
 
+/// Extract the origin (scheme + host + port) from a URL.
+/// "https://example.com/client-metadata.json" → "https://example.com"
+/// "http://localhost:3000/client-metadata.json" → "http://localhost:3000"
+fn origin_of(url: &str) -> String {
+    match url.find("://") {
+        Some(scheme_end) => {
+            let after_scheme = &url[scheme_end + 3..];
+            match after_scheme.find('/') {
+                Some(path_start) => url[..scheme_end + 3 + path_start].to_string(),
+                None => url.to_string(),
+            }
+        }
+        None => url.to_string(),
+    }
+}
+
 /// Build the auth router with all authentication routes.
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -55,10 +71,11 @@ pub fn auth_router() -> Router<AppState> {
 /// Returns the JSON document required by the AT Protocol OAuth spec.
 pub async fn client_metadata(State(state): State<AppState>) -> Json<serde_json::Value> {
     let config = &state.config.auth;
+    let client_uri = origin_of(&config.client_id);
     Json(serde_json::json!({
         "client_id": config.client_id,
         "client_name": state.config.app.name,
-        "client_uri": format!("http://{}:{}", state.config.app.host, state.config.app.port),
+        "client_uri": client_uri,
         "redirect_uris": [config.redirect_uri],
         "scope": config.scope,
         "grant_types": ["authorization_code", "refresh_token"],
@@ -71,7 +88,7 @@ pub async fn client_metadata(State(state): State<AppState>) -> Json<serde_json::
 
 /// OAuth protected resource metadata endpoint.
 pub async fn well_known(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let base_url = format!("http://{}:{}", state.config.app.host, state.config.app.port);
+    let base_url = origin_of(&state.config.auth.client_id);
     Json(serde_json::json!({
         "resource": base_url,
         "authorization_servers": [],
@@ -337,8 +354,30 @@ async fn callback(
         if is_secure { "; Secure" } else { "" }
     );
 
-    let redirect_url = &oauth_state.redirect_after;
-    let mut response = axum::response::Redirect::temporary(redirect_url).into_response();
+    let redirect_url = if oauth_state.redirect_after.starts_with("http://")
+        || oauth_state.redirect_after.starts_with("https://")
+    {
+        // Cross-origin redirect — append token params so the SPA can store them.
+        // The cookie won't be readable on a different domain.
+        let separator = if oauth_state.redirect_after.contains('?') {
+            "&"
+        } else {
+            "?"
+        };
+        format!(
+            "{}{}token={}&did={}&handle={}",
+            oauth_state.redirect_after,
+            separator,
+            session_id,
+            token_response.sub,
+            oauth_state.handle,
+        )
+    } else {
+        // Same-origin relative redirect — cookie works fine
+        oauth_state.redirect_after.clone()
+    };
+
+    let mut response = axum::response::Redirect::temporary(&redirect_url).into_response();
 
     if let Ok(val) = HeaderValue::from_str(&cookie_value) {
         response.headers_mut().insert("set-cookie", val);
@@ -451,6 +490,7 @@ mod tests {
                     secret_key: "a]3)FRd9-x4bQ7Y!kN2mW#pL8v$Tz0cS".into(),
                     cors_origins: vec![],
                     environment: "development".into(),
+                    admin_dids: vec![],
                 },
                 auth: AuthConfig {
                     client_id: "http://localhost:3000/client-metadata.json".into(),
@@ -472,6 +512,7 @@ mod tests {
             identity: Arc::new(atrg_identity::IdentityResolver::with_defaults(
                 reqwest::Client::new(),
             )),
+            extensions: Arc::new(atrg_core::Extensions::new()),
         }
     }
 
@@ -721,5 +762,21 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), 401);
+    }
+
+    #[test]
+    fn origin_of_strips_path() {
+        assert_eq!(
+            super::origin_of("https://example.com/client-metadata.json"),
+            "https://example.com"
+        );
+        assert_eq!(
+            super::origin_of("http://localhost:3000/client-metadata.json"),
+            "http://localhost:3000"
+        );
+        assert_eq!(
+            super::origin_of("http://localhost:3000"),
+            "http://localhost:3000"
+        );
     }
 }

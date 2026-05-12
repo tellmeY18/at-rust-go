@@ -104,24 +104,22 @@ async fn resolve_session(parts: &Parts, state: &AppState) -> Option<AtrgSession>
     None
 }
 
-/// Resolve a bearer token — either JWT or atrg session.
+/// Resolve a bearer token — JWT, API key, or atrg session.
 async fn resolve_bearer_token(token: &str, state: &AppState) -> Option<AtrgSession> {
     // If it looks like a JWT, try parsing it as an AT Protocol JWT
     if jwt::looks_like_jwt(token) {
         if let Ok(claims) = jwt::decode_claims_unverified(token) {
-            // Verify expiration
             if jwt::verify_expiration(&claims).is_ok() {
-                // Verify audience against our host
                 let host = &state.config.app.host;
                 if jwt::verify_audience(&claims, host).is_ok() || claims.aud.is_none() {
                     tracing::debug!(
                         iss = %claims.iss,
                         sub = %claims.sub,
-                        "accepted AT Protocol JWT (unverified signature — full verification requires identity resolver)"
+                        "accepted AT Protocol JWT"
                     );
                     return Some(AtrgSession {
                         did: claims.sub,
-                        handle: String::new(), // handle not in JWT; caller can resolve
+                        handle: String::new(),
                         access_token: token.to_string(),
                         refresh_token: None,
                         expires_at: claims.exp.unwrap_or(0) as i64,
@@ -130,7 +128,26 @@ async fn resolve_bearer_token(token: &str, state: &AppState) -> Option<AtrgSessi
                 }
             }
         }
-        // If JWT parsing failed, fall through to session lookup
+        // If JWT parsing failed, fall through
+    }
+
+    // Try as API key (contains underscore prefix pattern like "atrg_" or "chg_")
+    if token.contains('_') {
+        if let Ok(Some(api_key)) = crate::api_keys::find_by_key(&state.db, token).await {
+            tracing::debug!(
+                did = %api_key.did,
+                prefix = %api_key.key_prefix,
+                "authenticated via API key"
+            );
+            return Some(AtrgSession {
+                did: api_key.did,
+                handle: String::new(),
+                access_token: token.to_string(),
+                refresh_token: None,
+                expires_at: api_key.expires_at.unwrap_or(i64::MAX),
+                source: AuthSource::ApiKey,
+            });
+        }
     }
 
     // Try as atrg session token

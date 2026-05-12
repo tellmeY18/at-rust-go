@@ -12,6 +12,8 @@ use futures::StreamExt;
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
+use atrg_db::DbPool;
+
 use crate::backoff::Backoff;
 use crate::event::JetstreamEvent;
 use crate::metrics::MetricsCounter;
@@ -48,7 +50,7 @@ where
     let max_lag = config.max_lag_events;
 
     // Build the WebSocket URL with collection filters.
-    let url = build_ws_url(&config.host, &config.collections);
+    let url = build_ws_url(&config.host, &config.collections, None);
 
     tracing::info!(
         url = %url,
@@ -68,18 +70,101 @@ where
     Ok(handle)
 }
 
-/// Build the Jetstream WebSocket subscription URL.
-fn build_ws_url(host: &str, collections: &[String]) -> String {
-    if collections.is_empty() {
-        return format!("wss://{}/subscribe", host);
+/// Spawn a Jetstream consumer with cursor persistence.
+///
+/// Like [`spawn_consumer`], but loads the initial cursor from the database
+/// and periodically saves the latest processed event timestamp. This allows
+/// the consumer to resume from where it left off after a restart.
+///
+/// The `consumer_id` is a stable identifier for this consumer instance,
+/// used as the key in the cursor persistence table. Use a meaningful name
+/// like `"my-app-aggregator"` so multiple consumers can coexist.
+///
+/// Cursor behaviour is controlled by [`StreamConfig::cursor`]:
+/// - `None` or `"live"` — always start from now (no cursor in the URL).
+/// - `"auto"` — resume from the last stored cursor in the database.
+/// - A numeric string — use that value as the initial cursor timestamp.
+pub async fn spawn_consumer_with_cursor<S>(
+    config: &StreamConfig,
+    pool: &DbPool,
+    consumer_id: &str,
+    state: S,
+    handler: EventHandler<S>,
+) -> anyhow::Result<tokio::task::JoinHandle<()>>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    // Ensure cursor table exists.
+    crate::cursor::ensure_cursor_table(pool).await?;
+
+    // Load stored cursor.
+    let stored_cursor = crate::cursor::load_cursor(pool, consumer_id).await?;
+
+    let initial_cursor = match config.cursor.as_deref() {
+        Some("live") | None => None,
+        Some("auto") => stored_cursor,
+        Some(numeric) => numeric.parse::<i64>().ok(),
+    };
+
+    if let Some(cursor) = initial_cursor {
+        tracing::info!(
+            cursor = cursor,
+            consumer_id = consumer_id,
+            "resuming Jetstream from stored cursor"
+        );
+    } else {
+        tracing::info!(
+            consumer_id = consumer_id,
+            "starting Jetstream from live (no cursor)"
+        );
     }
 
-    let params: Vec<String> = collections
+    // Build URL with cursor.
+    let url = build_ws_url(&config.host, &config.collections, initial_cursor);
+
+    let metrics = MetricsCounter::new();
+    let channel_capacity = config.channel_capacity;
+    let max_lag = config.max_lag_events;
+
+    tracing::info!(
+        url = %url,
+        channel_capacity = channel_capacity,
+        max_lag = max_lag,
+        "starting Jetstream consumer with cursor persistence"
+    );
+
+    let (tx, rx) = mpsc::channel::<JetstreamEvent>(channel_capacity);
+
+    // Spawn the cursor-persisting dispatcher task.
+    let pool_clone = pool.clone();
+    let cid = consumer_id.to_string();
+    spawn_cursor_dispatcher(rx, handler, state, metrics.clone(), pool_clone, cid);
+
+    // Spawn the reader task.
+    let handle = spawn_reader(url, tx, metrics, max_lag);
+
+    Ok(handle)
+}
+
+/// Build the Jetstream WebSocket subscription URL.
+///
+/// If `cursor` is provided, it is appended as a query parameter so that
+/// the relay replays events from that timestamp onward.
+fn build_ws_url(host: &str, collections: &[String], cursor: Option<i64>) -> String {
+    let mut params: Vec<String> = collections
         .iter()
         .map(|c| format!("wantedCollections={}", c))
         .collect();
 
-    format!("wss://{}/subscribe?{}", host, params.join("&"))
+    if let Some(cursor_us) = cursor {
+        params.push(format!("cursor={}", cursor_us));
+    }
+
+    if params.is_empty() {
+        format!("wss://{}/subscribe", host)
+    } else {
+        format!("wss://{}/subscribe?{}", host, params.join("&"))
+    }
 }
 
 /// Spawn the dispatcher task that reads from the channel and calls the handler.
@@ -99,6 +184,67 @@ fn spawn_dispatcher<S>(
             }
         }
         tracing::info!("Jetstream dispatcher task exiting");
+    });
+}
+
+/// Interval (in number of events) between cursor saves.
+///
+/// Saving on every event would be too expensive for high-throughput streams.
+/// 100 events provides a good balance between resume precision and I/O load.
+const CURSOR_SAVE_INTERVAL: u64 = 100;
+
+/// Dispatcher that persists the cursor every [`CURSOR_SAVE_INTERVAL`] events.
+///
+/// On graceful shutdown (channel closed), the final cursor is saved so that
+/// no more than one interval's worth of events needs to be replayed.
+fn spawn_cursor_dispatcher<S>(
+    mut rx: mpsc::Receiver<JetstreamEvent>,
+    handler: EventHandler<S>,
+    state: S,
+    metrics: Arc<MetricsCounter>,
+    pool: DbPool,
+    consumer_id: String,
+) where
+    S: Clone + Send + Sync + 'static,
+{
+    tokio::spawn(async move {
+        let mut event_count: u64 = 0;
+        let mut last_time_us: Option<i64> = None;
+
+        while let Some(event) = rx.recv().await {
+            let time_us = event.time_us;
+
+            if let Err(e) = handler(event, state.clone()).await {
+                tracing::error!(error = %e, "Jetstream event handler error");
+                metrics.errors.fetch_add(1, Ordering::Relaxed);
+            }
+
+            // Only track non-zero timestamps (zero means the field was absent).
+            if time_us > 0 {
+                last_time_us = Some(time_us);
+            }
+            event_count += 1;
+
+            // Periodically persist the cursor.
+            if event_count % CURSOR_SAVE_INTERVAL == 0 {
+                if let Some(cursor) = last_time_us {
+                    if let Err(e) = crate::cursor::save_cursor(&pool, &consumer_id, cursor).await {
+                        tracing::warn!(error = %e, "failed to save Jetstream cursor");
+                    }
+                }
+            }
+        }
+
+        // Save final cursor on shutdown.
+        if let Some(cursor) = last_time_us {
+            if let Err(e) = crate::cursor::save_cursor(&pool, &consumer_id, cursor).await {
+                tracing::warn!(error = %e, "failed to save final Jetstream cursor");
+            } else {
+                tracing::info!(cursor = cursor, "saved final Jetstream cursor on shutdown");
+            }
+        }
+
+        tracing::info!("Jetstream cursor dispatcher task exiting");
     });
 }
 
@@ -226,7 +372,7 @@ mod tests {
 
     #[test]
     fn build_ws_url_no_collections() {
-        let url = build_ws_url("jetstream1.example.com", &[]);
+        let url = build_ws_url("jetstream1.example.com", &[], None);
         assert_eq!(url, "wss://jetstream1.example.com/subscribe");
     }
 
@@ -235,6 +381,7 @@ mod tests {
         let url = build_ws_url(
             "jetstream1.example.com",
             &["app.bsky.feed.post".to_string()],
+            None,
         );
         assert_eq!(
             url,
@@ -250,10 +397,33 @@ mod tests {
                 "app.bsky.feed.post".to_string(),
                 "app.bsky.feed.like".to_string(),
             ],
+            None,
         );
         assert_eq!(
             url,
             "wss://jetstream1.example.com/subscribe?wantedCollections=app.bsky.feed.post&wantedCollections=app.bsky.feed.like"
+        );
+    }
+
+    #[test]
+    fn build_ws_url_with_cursor_no_collections() {
+        let url = build_ws_url("jetstream1.example.com", &[], Some(1700000000000000));
+        assert_eq!(
+            url,
+            "wss://jetstream1.example.com/subscribe?cursor=1700000000000000"
+        );
+    }
+
+    #[test]
+    fn build_ws_url_with_cursor_and_collections() {
+        let url = build_ws_url(
+            "jetstream1.example.com",
+            &["app.bsky.feed.post".to_string()],
+            Some(1700000000000000),
+        );
+        assert_eq!(
+            url,
+            "wss://jetstream1.example.com/subscribe?wantedCollections=app.bsky.feed.post&cursor=1700000000000000"
         );
     }
 }

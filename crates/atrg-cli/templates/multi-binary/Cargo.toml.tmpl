@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/{{name}}-server",
+    "crates/{{name}}-aggregator",
+    "crates/{{name}}-shared",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[workspace.dependencies]
+atrg-core = { version = "0.1.3", features = ["postgres"] }
+atrg-auth = { version = "0.1.3", features = ["postgres"] }
+atrg-db = { version = "0.1.3", features = ["postgres"] }
+atrg-xrpc = "0.1.3"
+atrg-stream = "0.1.3"
+atrg-repo = "0.1.3"
+atrg-identity = "0.1.3"
+atrg-blob = "0.1.3"
+axum = { version = "0.8", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "migrate"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+{{name}}-shared = { path = "crates/{{name}}-shared" }

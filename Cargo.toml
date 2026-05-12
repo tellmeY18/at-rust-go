@@ -14,6 +14,8 @@ members = [
     "crates/atrg-repo",
     "crates/atrg-feed",
     "crates/atrg-label",
+    "crates/atrg-blob",
+    "crates/atrg-email",
     "examples/minimal",
     "examples/social",
 ]
@@ -45,6 +47,8 @@ atrg-repo = { path = "crates/atrg-repo", version = "0.1.3" }
 atrg-firehose = { path = "crates/atrg-firehose", version = "0.1.3" }
 atrg-feed = { path = "crates/atrg-feed", version = "0.1.3" }
 atrg-label = { path = "crates/atrg-label", version = "0.1.3" }
+atrg-blob = { path = "crates/atrg-blob", version = "0.1.3" }
+atrg-email = { path = "crates/atrg-email", version = "0.1.3" }
 
 # AT Protocol — DO NOT reimplement anything these provide
 atproto-identity = "0.14.2"
@@ -105,6 +109,9 @@ syn = { version = "2", features = ["full"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+
+# Email
+lettre = { version = "0.11", features = ["tokio1-native-tls", "builder", "smtp-transport"], default-features = false }
 
 # Misc
 url = "2"

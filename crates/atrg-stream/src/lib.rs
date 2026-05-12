@@ -11,13 +11,16 @@
 
 pub mod backoff;
 pub mod consumer;
+pub mod cursor;
 pub mod event;
 pub mod metrics;
+pub mod router;
 pub mod zstd_dict;
 
-pub use consumer::spawn_consumer;
+pub use consumer::{spawn_consumer, spawn_consumer_with_cursor};
 pub use event::JetstreamEvent;
 pub use metrics::JetstreamMetrics;
+pub use router::{CommitEvent, EventRouterBuilder, Operation};
 
 use std::sync::Arc;
 
@@ -39,6 +42,12 @@ pub struct StreamConfig {
     pub channel_capacity: usize,
     /// Event lag threshold before shedding/warning (default: 10_000).
     pub max_lag_events: usize,
+    /// Optional cursor mode for resumption.
+    ///
+    /// - `None` or `Some("live")` — always start from now (no cursor).
+    /// - `Some("auto")` — resume from the last stored cursor in the database.
+    /// - `Some("<numeric>")` — use the given value as a microsecond timestamp cursor.
+    pub cursor: Option<String>,
 }
 
 /// Type alias for event handler functions.

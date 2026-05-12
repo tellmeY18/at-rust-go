@@ -75,6 +75,11 @@ pub struct AppConfig {
     /// headers.
     #[serde(default = "default_environment")]
     pub environment: String,
+
+    /// DIDs to auto-provision as admin on startup. Populated from `atrg.toml`
+    /// or the `ATRG_APP__ADMIN_DIDS` env var (comma-separated).
+    #[serde(default)]
+    pub admin_dids: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -86,6 +91,7 @@ impl Default for AppConfig {
             secret_key: String::new(),
             cors_origins: Vec::new(),
             environment: default_environment(),
+            admin_dids: Vec::new(),
         }
     }
 }
@@ -408,6 +414,57 @@ impl Config {
 
         Ok(())
     }
+}
+
+// ---------------------------------------------------------------------------
+// App-specific config loading
+// ---------------------------------------------------------------------------
+
+/// Load an app-specific configuration section from `atrg.toml`.
+///
+/// This allows apps to define custom `[section_name]` blocks in `atrg.toml`
+/// and deserialize them into typed structs, with automatic environment
+/// variable overrides using the `{PREFIX}_FIELD` convention.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// #[derive(serde::Deserialize)]
+/// struct MyAppConfig {
+///     database_url: String,
+///     admin_dids: Vec<String>,
+/// }
+///
+/// let config: MyAppConfig = atrg_core::config::load_app_config("myapp")?;
+/// ```
+///
+/// Fields can be overridden by env vars: set `MYAPP_DATABASE_URL` to override
+/// `[myapp] database_url`. The prefix is derived by uppercasing the section name.
+pub fn load_app_config<T: serde::de::DeserializeOwned>(section_name: &str) -> anyhow::Result<T> {
+    load_app_config_from_path::<T>(section_name, "atrg.toml")
+}
+
+/// Load an app-specific configuration section from a specific TOML file path.
+pub fn load_app_config_from_path<T: serde::de::DeserializeOwned>(
+    section_name: &str,
+    path: &str,
+) -> anyhow::Result<T> {
+    let toml_str = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path, e))?;
+    let toml_val: toml::Value = toml::from_str(&toml_str)
+        .map_err(|e| anyhow::anyhow!("Failed to parse {}: {}", path, e))?;
+    let section = toml_val
+        .get(section_name)
+        .ok_or_else(|| anyhow::anyhow!("Missing [{}] section in {}", section_name, path))?;
+    let config: T = section.clone().try_into().map_err(|e| {
+        anyhow::anyhow!(
+            "Invalid [{}] configuration in {}: {}",
+            section_name,
+            path,
+            e
+        )
+    })?;
+    Ok(config)
 }
 
 // ---------------------------------------------------------------------------

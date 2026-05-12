@@ -118,8 +118,14 @@
           shellHook = ''
             echo "🦀  Rust E2E testing environment (with PostgreSQL)"
             echo "   Rust:  $(rustc --version)"
-            echo "   psql:  $(psql --version)"
-            echo "   tranquil-pds available for integration tests"
+            echo "   psql:  $(psql --version 2>/dev/null || echo 'not found')"
+            echo ""
+            echo "   Run Postgres E2E tests:"
+            echo "     bash scripts/pg-e2e.sh"
+            echo ""
+            echo "   Or manually:"
+            echo "     export TEST_DATABASE_URL=postgres://atrg_test@127.0.0.1:15432/atrg_test"
+            echo "     bash scripts/pg-e2e.sh"
             echo ""
           '';
         };

@@ -1,0 +1,17 @@
+use atrg_core::AtrgApp;
+use anyhow::Context;
+use sqlx::postgres::PgPool;
+
+mod routes;
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+
+    AtrgApp::new()
+        .with_auth_routes(atrg_auth::routes::routes())
+        .with_cleanup_task(atrg_auth::routes::spawn_cleanup_task)
+        .mount(routes::api())
+        .run()
+        .await
+}

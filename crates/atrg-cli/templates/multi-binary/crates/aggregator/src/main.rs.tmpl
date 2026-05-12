@@ -1,0 +1,29 @@
+use atrg_core::AtrgApp;
+use atrg_stream::{EventRouterBuilder, CommitEvent};
+
+mod routes;
+
+async fn handle_event(event: CommitEvent, _state: atrg_core::AppState) -> anyhow::Result<()> {
+    tracing::info!(
+        collection = %event.collection,
+        did = %event.did,
+        "received event"
+    );
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+
+    let router = EventRouterBuilder::new()
+        // Add your collection handlers here:
+        // .on_create("com.example.post", handle_post)
+        .build();
+
+    AtrgApp::new()
+        .mount(routes::api())
+        .on_event(router)
+        .run()
+        .await
+}

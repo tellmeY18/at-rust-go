@@ -1,0 +1,21 @@
+use atrg_core::AppState;
+use axum::{Router, routing::get, Json};
+use serde_json::json;
+
+pub fn api() -> Router<AppState> {
+    Router::new()
+        .route("/", get(index))
+        .route("/api/health", get(health))
+}
+
+async fn index() -> Json<serde_json::Value> {
+    Json(json!({
+        "name": "{{name}}-aggregator",
+        "description": "Read-only aggregator for {{name}}",
+        "status": "ok"
+    }))
+}
+
+async fn health() -> Json<serde_json::Value> {
+    Json(json!({ "healthy": true }))
+}

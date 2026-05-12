@@ -697,337 +697,320 @@ For each crate:
 - Frontend of any kind (HTML, CSS, JS, templating, static assets).
 - ORM (write SQL).
 - Multi-tenancy.
-- Postgres support (SQLite only; Postgres tracked for v0.2).
 - Custom session backends (atrg_sessions table only).
 - Hot-reload outside of what `cargo-watch` gives you.
 - Full PDS implementation.
 - Server→client push (SSE, WebSockets).
-- Jetstream cursor persistence across restarts (tracked for v0.2; the v0.1.0 consumer always resumes from "now").
-- Distributed identity cache (single-process `moka` only; Redis-backed cache tracked for v0.2).
-- **Bundled lexicons of any kind.** No `app.bsky.*`, no `com.atproto.*`, no helpers, no typed records, no feature flags. Developers bring their own lexicon `.json` files and validate them with `atproto-lexicon` themselves. A future convenience crate bundling popular lexicons may exist as an out-of-tree, community-managed package — it will never be part of this repository or the v0.1.0 release.
+- Distributed identity cache (single-process `moka` only; Redis-backed cache tracked for post-v0.2).
+- **Bundled lexicons of any kind.** No `app.bsky.*`, no `com.atproto.*`. Developers bring their own lexicon `.json` files.
 
 ---
 
-## Post-v0.1.0 Phases — Toward a Complete AT Protocol Gateway
+## v0.2.0 — Production-Ready Framework (changala.app-informed)
 
-> These phases turn atrg from a "working scaffold" into a genuine batteries-included framework — the Rust equivalent of what Fedify is for ActivityPub. A developer should be able to build a feed generator, labeler, or full custom ATProto app using only atrg crates plus their own business logic.
-
-### Phase 7 — Record Repository Helpers (`atrg-repo`) — v0.2.0
-
-Every ATProto app's bread and butter is CRUD on records via the user's PDS. v0.1.0 tells developers "use `atproto-client` directly." That's fine for power users but violates the "batteries included" promise. This phase wraps the common record operations with ergonomic, typed helpers that use the session's access token transparently (including auto-refresh).
-
-#### 7.1 `atrg-repo` — Crate setup
-- [ ] New crate `crates/atrg-repo/`.
-- [ ] Depends on `atproto-client`, `atrg-auth` (for session/token access), `atrg-core`.
-
-#### 7.2 Typed record CRUD
-- [ ] `Repo::get_record<T>(at_uri) -> Result<T>` — fetch and deserialize a record.
-- [ ] `Repo::list_records<T>(collection, cursor, limit) -> Result<Page<T>>` — paginated listing.
-- [ ] `Repo::create_record<T>(collection, record) -> Result<StrongRef>` — create with auto-TID generation.
-- [ ] `Repo::put_record<T>(collection, rkey, record) -> Result<StrongRef>` — upsert.
-- [ ] `Repo::delete_record(at_uri) -> Result<()>` — delete.
-- [ ] All methods automatically use the authenticated user's PDS endpoint (resolved via DID document).
-- [ ] Transparent token refresh on 401 (delegates to `atrg-auth`).
-
-#### 7.3 AT-URI and TID utilities
-- [ ] `AtUri::new(did, collection, rkey)` builder with validation.
-- [ ] `AtUri::parse(str)` with proper error messages.
-- [ ] `Tid::now()` — generate a TID from the current timestamp.
-- [ ] `resolve_at_uri(at_uri) -> Result<Record>` — resolve an AT-URI to its record content by looking up the DID's PDS and fetching.
-
-#### 7.4 Blob / media upload
-- [ ] `Repo::upload_blob(data, mime_type) -> Result<BlobRef>` — wraps `com.atproto.repo.uploadBlob`.
-- [ ] `BlobRef` type that can be embedded directly into record structs for images, videos, etc.
-- [ ] Size limit validation before upload (configurable, default 1 MB for images).
-- [ ] Helper: `upload_image_from_url(url) -> Result<BlobRef>` — fetch + upload in one call (common pattern).
-
-#### 7.5 Phase 7 E2E Gate 🚧
-- [ ] Integration test: create a record, read it back, update it, delete it — all via `atrg-repo` against a mock PDS.
-- [ ] Integration test: upload a blob and attach it to a record.
-- [ ] `examples/minimal` updated to use `Repo` helper instead of raw `atproto-client`.
+> **Goal of v0.2.0:** A developer can build a production ATProto app with the complexity of [changala.app](https://github.com/changala-social/changala.app) (62 XRPC endpoints, Postgres, S3 blobs, RBAC, API keys, multi-binary workspace, firehose materialisation) using **only** atrg framework features — zero custom migration runners, zero `once_cell` globals, zero auth middleware workarounds.
+>
+> Every item in this phase addresses a real pain point from changala.app's implementation. See `CLAUDE.md` "Lessons from changala.app" for the full analysis.
 
 ---
 
-### Phase 8 — Firehose / Relay Subscription (`atrg-firehose`) — v0.2.0
+### 7. Core Infrastructure Fixes
 
-Jetstream is filtered and convenient. But feed generators, full-network indexers, and labelers need `com.atproto.sync.subscribeRepos` — the raw firehose from a relay. This is the ATProto equivalent of Fedify's shared inbox.
+These fix fundamental issues that block real-world usage.
 
-#### 8.1 `atrg-firehose` — Crate setup
-- [ ] New crate `crates/atrg-firehose/`.
-- [ ] Depends on `atproto-repo` (for CAR file decoding), `tokio-tungstenite` or the relay client from `atproto-crates` if available.
+#### 7.1 Migration Namespace Isolation
+- [ ] atrg internal migrations use `_atrg_migrations` tracking table (not `_sqlx_migrations`)
+- [ ] `AtrgApp::with_migrations_dir(path)` sets app migrations directory (default: `./migrations`)
+- [ ] `AtrgApp::with_migrations_table(name)` overrides the tracking table name
+- [ ] Multiple migration directories for multi-crate workspaces (Ring + Aggregator)
+- [ ] `atrg migrate` CLI respects configured directory and table
+- [ ] Reusable utility: `atrg_db::run_migrations(pool, dir, table)`
 
-#### 8.2 Firehose consumer
-- [ ] `subscribe_repos(relay_url, cursor) -> Stream<FirehoseEvent>` — WebSocket consumer for the relay firehose.
-- [ ] `FirehoseEvent` enum: `Commit { repo, ops, rev, blocks }`, `Handle`, `Identity`, `Tombstone`, `Info`.
-- [ ] CAR block decoding: each commit carries a CAR file of CBOR-encoded records; decode transparently.
-- [ ] Cursor persistence: store last processed `seq` in SQLite, resume from it on restart.
+#### 7.2 Postgres as First-Class Backend
+- [ ] `atrg new --db postgres` scaffold option
+- [ ] Feature flags `postgres` / `sqlite` on `atrg-core`, `atrg-auth`, `atrg-db`
+- [ ] All internal SQL tested against both backends in CI
+- [ ] Internal migrations ship as both SQLite and Postgres variants
+- [ ] `atrg-db` re-exports correct pool type based on feature flag
 
-#### 8.3 Backpressure and performance
-- [ ] Bounded channel (same pattern as Jetstream consumer).
-- [ ] Parallel decode: decode CAR blocks on a `tokio::task::spawn_blocking` pool to avoid starving the async runtime.
-- [ ] Lag metrics: `firehose_lag_seconds`, `firehose_events_total`, `firehose_errors_total`.
+#### 7.3 `AppState` Extension Mechanism
+- [ ] `extensions: Arc<TypeMap>` field in `AppState`
+- [ ] `AtrgApp::with_extension::<T>(value)` inserts typed app state
+- [ ] `state.extension::<T>() -> &T` retrieves it
+- [ ] `state.try_extension::<T>() -> Option<&T>` non-panicking variant
+- [ ] Accessible from route handlers AND `on_event` handlers
 
-#### 8.4 `AtrgApp::on_firehose` integration
-- [ ] `AtrgApp::on_firehose(handler)` — register a firehose handler, spawned when `[firehose]` config exists.
-- [ ] Config section in `atrg.toml`:
-  ```toml
-  [firehose]
-  relay = "wss://bsky.network"
-  cursor = "auto"  # "auto" = resume from stored cursor, or an explicit seq number
-  ```
+#### 7.4 Fix `client-metadata.json` Origin Derivation
+- [ ] `client_uri = origin_of(config.auth.client_id)` instead of `http://{host}:{port}`
+- [ ] Same fix for `/.well-known/oauth-protected-resource`
+- [ ] `origin_of(url: &str) -> String` utility in `atrg-auth`
 
-#### 8.5 Phase 8 E2E Gate 🚧
-- [ ] Integration test: connect to a mock relay, receive commits, decode records, verify cursor persistence.
-- [ ] Lag metrics emitted and queryable.
+#### 7.5 Cross-Origin Auth Handoff
+- [ ] `[auth] post_login_redirect` config field
+- [ ] After OAuth callback: redirect to `{post_login_redirect}?token={id}&did={did}&handle={handle}`
+- [ ] Backward compatible: cookie-based flow when field is absent
+- [ ] `ATRG_AUTH__POST_LOGIN_REDIRECT` env var override
 
----
+#### 7.6 Environment Variable Overrides
+- [ ] Every `atrg.toml` field overridable via `ATRG_SECTION__KEY` env vars
+- [ ] Secrets prefer env vars over TOML
+- [ ] App-specific config: `AtrgApp::app_config_with_env::<T>(section, prefix)`
+- [ ] Log applied overrides at startup
 
-### Phase 9 — Feed Generator Framework (`atrg-feed`) — v0.2.0
-
-Feed generators are the most common ATProto app type. The protocol defines `app.bsky.feed.describeFeedGenerator` and `app.bsky.feed.getFeedSkeleton`. A batteries-included framework **must** make this trivial.
-
-#### 9.1 `atrg-feed` — Crate setup
-- [ ] New crate `crates/atrg-feed/`.
-- [ ] Depends on `atrg-xrpc`, `atrg-core`, `atrg-auth`.
-
-#### 9.2 Feed registration and skeleton serving
-- [ ] `FeedGenerator` builder:
-  ```rust
-  FeedGenerator::new("my-feed", "My Custom Feed")
-      .description("Posts about Rust and AT Protocol")
-      .avatar(blob_ref)
-      .handler(my_feed_handler)
-  ```
-- [ ] Auto-registers `/xrpc/app.bsky.feed.describeFeedGenerator` and `/xrpc/app.bsky.feed.getFeedSkeleton` routes.
-- [ ] `FeedHandler` trait:
-  ```rust
-  async fn get_skeleton(&self, cursor: Option<String>, limit: usize, user_did: Option<String>)
-      -> Result<FeedSkeleton>;
-  ```
-- [ ] `FeedSkeleton` type: `{ feed: Vec<SkeletonItem>, cursor: Option<String> }` where `SkeletonItem` has an `at_uri` (post AT-URI).
-- [ ] Multi-feed support: register N feeds on one server, each with its own handler.
-
-#### 9.3 Feed DID and well-known
-- [ ] Auto-serve `/.well-known/did.json` for the feed generator's DID (`did:web:` based on configured hostname).
-- [ ] `atrg.toml` config:
-  ```toml
-  [[feeds]]
-  id = "my-feed"
-  display_name = "My Custom Feed"
-  description = "Posts about Rust"
-  ```
-
-#### 9.4 Phase 9 E2E Gate 🚧
-- [ ] Integration test: `describeFeedGenerator` returns correct feed list.
-- [ ] Integration test: `getFeedSkeleton` returns valid skeleton with cursor-based pagination.
-- [ ] `examples/feed-generator/` — a complete working feed generator example.
+#### 7.7 TID and AT-URI Utilities
+- [ ] `Tid::now() -> String` — AT Protocol Timestamp ID
+- [ ] `Tid::from_str(s) -> Result<Tid>`
+- [ ] `AtUri::new(did, collection, rkey)` / `AtUri::parse(uri)`
+- [ ] Re-exported from `atrg_core`
 
 ---
 
-### Phase 10 — Labeler Framework (`atrg-label`) — v0.3.0
+### 8. Auth & Access Control
 
-Labelers are the second major ATProto extension point — moderation, content classification, and trust signals. The protocol defines `com.atproto.label.subscribeLabels` and `tools.ozone.*` endpoints.
+#### 8.1 API Key Authentication
+- [ ] `api_keys` table (auto-migrated): `key_hash, key_prefix, did, name, scopes, expires_at`
+- [ ] `RequireAuth` natively recognizes prefixed API keys (no synthetic sessions)
+- [ ] `AtrgSession.source` gains `ApiKey` variant
+- [ ] Configurable prefix: `[auth] api_key_prefix = "atrg_"`
+- [ ] Built-in: `atrg_auth::api_keys::{create, list, revoke}`
+- [ ] CLI: `atrg api-key create --did did:plc:xxx --scope "admin:*"`
+- [ ] `ATRG_BOOTSTRAP_API_KEY` env var for first-time setup
 
-#### 10.1 `atrg-label` — Crate setup
-- [ ] New crate `crates/atrg-label/`.
-- [ ] Depends on `atrg-xrpc`, `atrg-core`, `atrg-db`.
+#### 8.2 Role-Based Access Control
+- [ ] `roles` table (auto-migrated): `did, role, scope_type, scope_id, granted_by, granted_at`
+- [ ] `RequireRole<R>` extractor — rejects with 403 if role missing
+- [ ] Scoped roles: `require_role_or_above(state, did, "classRep", Some(resource_id))`
+- [ ] Role hierarchy: configurable numeric levels
+- [ ] Admin bootstrap: `[app] admin_dids` auto-provisions on startup
+- [ ] `ATRG_APP__ADMIN_DIDS` env var (comma-separated)
 
-#### 10.2 Label creation and signing
-- [ ] `Label` type matching the `com.atproto.label.defs#label` schema.
-- [ ] `LabelStore` — SQLite-backed storage for labels the service has issued.
-- [ ] `create_label(subject, value, neg?) -> Result<Label>` — create and persist a signed label.
-- [ ] Label signing with the labeler's keypair (ed25519 or secp256k1, matching the labeler DID's signing key).
-
-#### 10.3 Label subscription endpoint
-- [ ] `/xrpc/com.atproto.label.subscribeLabels` — WebSocket endpoint that streams labels to subscribers.
-- [ ] Cursor-based replay from the label store.
-- [ ] Backpressure: if a subscriber can't keep up, disconnect gracefully.
-
-#### 10.4 Labeler DID and service declaration
-- [ ] Auto-serve `/.well-known/did.json` with the labeler's `#atproto_labeler` service endpoint.
-- [ ] Config:
-  ```toml
-  [labeler]
-  signing_key = "path/to/private-key.pem"
-  ```
-
-#### 10.5 Phase 10 E2E Gate 🚧
-- [ ] Integration test: create labels, subscribe, receive them over WebSocket.
-- [ ] `examples/labeler/` — a basic keyword-based labeler.
+#### 8.3 Ban / Moderation Primitives
+- [ ] `bans` table (auto-migrated): `did, reason, expires_at, created_by`
+- [ ] `CheckNotBanned` extractor — rejects banned DIDs with 403
+- [ ] TTL support: bans auto-expire
+- [ ] XRPC helpers: `ban_did`, `lift_ban`, `list_bans`, `is_banned`
 
 ---
 
-### Phase 11 — Production Hardening — v0.2.0
+### 9. Data & Storage
 
-These are cross-cutting concerns that any production deployment needs. Several are listed as "out of scope for v0.1.0" — this phase promotes them.
+#### 9.1 Blob Storage (`atrg-blob`)
+- [ ] `BlobStore` trait: `put(data) -> CID`, `get(cid) -> bytes`, `exists`, `delete`
+- [ ] `S3BlobStore` implementation (using `rust-s3`)
+- [ ] `FileBlobStore` for development
+- [ ] Content addressing: SHA-256 with `sha256-` prefix
+- [ ] Config via `[blobs]` section + env var overrides
+- [ ] `AppState.blobs: Option<Arc<dyn BlobStore>>`
 
-#### 11.1 Graceful shutdown
-- [ ] Trap `SIGTERM` and `SIGINT` via `tokio::signal`.
-- [ ] Drain in-flight HTTP requests (Axum's `GracefulShutdown`).
-- [ ] Flush Jetstream / firehose consumer: process remaining channel items, persist cursor.
-- [ ] Close SQLite pool cleanly.
-- [ ] Configurable shutdown timeout (default 30s).
+#### 9.2 Record Repository (`atrg-repo`)
+- [ ] `RecordClient` wrapping `atproto_client::Client`
+- [ ] `create_record`, `get_record`, `put_record`, `delete_record`, `list_records`
+- [ ] `upload_blob(data, mime) -> BlobRef`
 
-#### 11.2 Rate limiting middleware
-- [ ] Token-bucket or sliding-window rate limiter as Axum middleware.
-- [ ] Per-DID and per-IP limits, configurable in `atrg.toml`:
-  ```toml
-  [rate_limit]
-  requests_per_second = 10
-  burst = 50
-  ```
-- [ ] XRPC routes return `RateLimitExceeded` with `Retry-After` header per AT Protocol spec.
-- [ ] Default: enabled in production, disabled in development.
-
-#### 11.3 Postgres support
-- [ ] `sqlx` feature flag: `sqlite` (default) or `postgres`.
-- [ ] All internal migrations dual-authored for both dialects.
-- [ ] `atrg.toml`: `url = "postgres://..."` auto-detects the backend.
-
-#### 11.4 Jetstream cursor persistence
-- [ ] Store last processed Jetstream `time_us` in the `atrg_cursors` table.
-- [ ] On restart, resume from stored cursor instead of "now."
-- [ ] Configurable: `cursor = "auto"` (resume) or `cursor = "live"` (always start from now).
-
-#### 11.5 Environment variable overrides
-- [ ] Every `atrg.toml` field overridable via `ATRG_` prefixed env vars (e.g. `ATRG_APP__PORT=8080`).
-- [ ] Secrets (`secret_key`, `signing_key`) should **prefer** env vars over the TOML file.
-- [ ] `atrg.toml` documents each env var equivalent in comments.
-
-#### 11.6 Dockerfile generation
-- [ ] `atrg new` generates a multi-stage `Dockerfile` (build with `rust:slim`, run with `debian:slim` or `distroless`).
-- [ ] `.dockerignore` included.
-- [ ] `docker compose` file with the app + optional Postgres service.
-
-#### 11.7 Phase 11 E2E Gate 🚧
-- [ ] Integration test: send SIGTERM, verify in-flight request completes, server exits 0.
-- [ ] Integration test: rate-limited endpoint returns 429 + `Retry-After`.
-- [ ] Integration test: Jetstream cursor round-trips through restart.
-- [ ] CI: build and run the generated Dockerfile.
+#### 9.3 Jetstream Cursor Persistence
+- [ ] Store last `time_us` in `atrg_cursors` table
+- [ ] On restart: resume from stored cursor or "now"
+- [ ] Config: `cursor = "auto"` | `cursor = "live"`
 
 ---
 
-### Phase 12 — Server→Client Push + Notifications — v0.3.0
+### 10. Event Processing & Firehose
 
-v0.1.0 explicitly excludes server→client push. This phase adds it because real apps need it (live feeds, notifications, real-time updates).
+#### 10.1 Event Router (`atrg-stream` enhancement)
+- [ ] `EventRouter::new().on_create(collection, handler).build()`
+- [ ] Typed `CommitEvent { did, rkey, collection, operation, record }`
+- [ ] `.on_create()`, `.on_delete()`, `.on()` (all ops)
+- [ ] Default: ignore unregistered collections with debug log
 
-#### 12.1 SSE (Server-Sent Events) support
-- [ ] `atrg_sse::SseStream` — helper to create SSE endpoints from `tokio::broadcast` or `mpsc` channels.
-- [ ] Integration with Jetstream: pipe filtered events to connected clients in real time.
-- [ ] Auth-aware: SSE connections require a valid session (cookie or bearer token).
+#### 10.2 Firehose / Relay Subscription (`atrg-firehose`)
+- [ ] WebSocket connection to relay (`subscribeRepos`)
+- [ ] DAG-CBOR + CAR parsing
+- [ ] `FirehoseEvent { seq, repo_did, collection, rkey, operation, record }`
+- [ ] `AtrgApp::on_firehose(handler)` builder
+- [ ] Config: `[firehose] relay = "wss://bsky.network"`, `cursor = "auto"`
+- [ ] Bounded backpressure + reconnection with cursor resume
 
-#### 12.2 WebSocket support
-- [ ] `atrg_ws::WebSocketHandler` — trait for defining WebSocket message handlers.
-- [ ] Axum's built-in WebSocket support, wrapped with auth extraction.
-- [ ] Connection lifecycle hooks: `on_connect`, `on_message`, `on_disconnect`.
-
-#### 12.3 Notification helpers
-- [ ] `NotificationBus` — in-process pub/sub for routing events to the right connected clients by DID.
-- [ ] `notify(did, payload)` — push a JSON payload to all of a user's active connections.
-
-#### 12.4 Phase 12 E2E Gate 🚧
-- [ ] Integration test: SSE client receives events pushed after Jetstream ingestion.
-- [ ] Integration test: WebSocket echo handler round-trips a message.
-
----
-
-### Phase 13 — Observability & Operations — v0.3.0
-
-Production apps need metrics, distributed tracing, and operational visibility beyond `tracing::info!`.
-
-#### 13.1 Prometheus metrics endpoint
-- [ ] `/metrics` endpoint serving Prometheus exposition format.
-- [ ] Built-in metrics: request count/latency by route, auth success/failure, Jetstream lag, identity cache hit rate, active sessions, DB pool utilization.
-- [ ] Users can register custom metrics via `atrg_metrics::register_counter!` etc.
-
-#### 13.2 OpenTelemetry integration
-- [ ] Optional `tracing-opentelemetry` layer, activated by config:
-  ```toml
-  [telemetry]
-  otlp_endpoint = "http://localhost:4317"
-  service_name = "my-app"
-  ```
-- [ ] Request trace IDs propagated in response headers (`traceparent`).
-
-#### 13.3 Admin / debug endpoints
-- [ ] `GET /admin/sessions` — list active sessions (auth-gated to a configured admin DID).
-- [ ] `GET /admin/config` — dump the running config (secrets redacted).
-- [ ] `GET /admin/identity-cache` — cache stats (size, hit rate, evictions).
-
-#### 13.4 Phase 13 E2E Gate 🚧
-- [ ] `/metrics` returns valid Prometheus text format.
-- [ ] Admin endpoints return 403 for non-admin DIDs, 200 for admin DID.
+#### 10.3 Feed Generator Framework (`atrg-feed`)
+- [ ] `FeedGenerator` trait: `id()`, `display_name()`, `get_skeleton()`
+- [ ] Auto-mount `getFeedSkeleton` XRPC handler
+- [ ] `/.well-known/did.json` for feed generator DID
+- [ ] `atrg feed publish` CLI
 
 ---
 
-### Post-v0.3.0 Horizon (tracked, not planned in detail)
+### 11. Scaffolding & DX
+
+#### 11.1 Multi-Binary Workspace Template
+- [ ] `atrg new --template multi-binary` generates:
+  - `crates/my-app-server/` (write server)
+  - `crates/my-app-aggregator/` (firehose subscriber)
+  - `crates/my-app-shared/` (generated types)
+- [ ] Each binary: own migrations directory + tracking table
+- [ ] `atrg dev --bin my-app-server` hot-reload support
+
+#### 11.2 Email / OTP Module (`atrg-email`)
+- [ ] SMTP via `[email]` config section (lettre)
+- [ ] `send_otp(state, did, email)` / `verify_otp(state, did, email, code)`
+- [ ] `otp_codes` table auto-migrated
+- [ ] Dev mode: log OTPs to stdout
+- [ ] Domain allowlist helper
+
+#### 11.3 Dockerfile Generation
+- [ ] `atrg new` generates multi-stage Dockerfile
+- [ ] `.dockerignore` included
+- [ ] `docker compose` with app + Postgres + MinIO
+
+---
+
+### 12. Production Hardening
+
+#### 12.1 Graceful Shutdown
+- [ ] Trap SIGTERM/SIGINT, drain in-flight requests
+- [ ] Flush Jetstream consumer, persist cursor
+- [ ] Configurable shutdown timeout (default 30s)
+
+#### 12.2 Rate Limiting
+- [ ] Token-bucket middleware, per-DID and per-IP
+- [ ] `[rate_limit] requests_per_second`, `burst` in `atrg.toml`
+- [ ] `RateLimitExceeded` with `Retry-After` per AT Protocol spec
+
+---
+
+### v0.2.0 E2E Test Suite 🚧
+
+> **The framework is not v0.2.0-ready until ALL of these pass.** This test suite validates that a changala.app-complexity application can be built without workarounds.
+
+#### Infrastructure Tests
+- [ ] Migration isolation: framework + app migrations in same DB, no conflicts
+- [ ] Migration isolation: two app binaries with separate migration directories
+- [ ] Postgres: all internal tables created with valid DDL
+- [ ] SQLite: all internal tables created with valid DDL (parity)
+- [ ] `AppState` extensions: insert in `main`, retrieve in handler + event handler
+- [ ] Env var overrides: `ATRG_APP__PORT=9999` changes bind port
+- [ ] App config: `[myapp]` section parsed with `MYAPP_*` env overlay
+
+#### Auth Tests
+- [ ] `client-metadata.json` valid for `http://localhost:3000` and `https://prod.example.com`
+- [ ] Cross-origin OAuth: SPA on `:5173` authenticates via API on `:3000` using `post_login_redirect`
+- [ ] API key `Bearer atrg_xxx` works through `RequireAuth` (no synthetic sessions)
+- [ ] API key scopes: scoped key rejected for out-of-scope operation
+- [ ] Role check: `RequireRole(Admin)` returns 403 for non-admin DID
+- [ ] Scoped role: classRep for course A cannot manage course B
+- [ ] Ban: banned DID receives 403 on write, 200 on read
+- [ ] Ban TTL: expired ban no longer blocks
+- [ ] Admin bootstrap: `ATRG_APP__ADMIN_DIDS` provisions admin on startup
+
+#### Data Tests
+- [ ] Blob store: `put()` → `get()` roundtrip (S3 + file backends)
+- [ ] Content addressing: same data = same CID (dedup)
+- [ ] TID generation: valid format, monotonically increasing
+- [ ] AT-URI: `new()` → `parse()` roundtrip
+- [ ] Record CRUD: create → get → put → delete via `RecordClient`
+- [ ] Cursor persistence: Jetstream cursor survives restart
+
+#### Event Processing Tests
+- [ ] EventRouter dispatches `on_create` correctly
+- [ ] EventRouter ignores unregistered collections
+- [ ] EventRouter handles `on_delete` for tombstoned records
+- [ ] Firehose: connect to mock relay, parse events, verify typed output
+- [ ] Firehose: disconnect + reconnect with cursor resume
+
+#### Scaffold Tests
+- [ ] `atrg new my-app --db postgres` produces buildable project
+- [ ] `atrg new my-app --template multi-binary` produces buildable workspace with 2 binaries
+- [ ] Generated Dockerfile builds and runs
+- [ ] `atrg dev --bin my-app-server` starts correctly
+
+#### Integration Test (Full Stack)
+- [ ] Boot a write server + aggregator from multi-binary template
+- [ ] Write server: OAuth login, create XRPC record, store blob
+- [ ] Aggregator: receives Jetstream event, materialises into DB
+- [ ] Write server: API key auth works for MCP-style programmatic access
+- [ ] Graceful shutdown: SIGTERM → in-flight request completes → exit 0
+- [ ] Rate limit: 429 + Retry-After after burst exceeded
+
+---
+
+## v0.3.0 — Advanced Protocol Features
+
+> **Goal:** Support labelers, server→client push, and production observability.
+
+### 13. Labeler Framework (`atrg-label`)
+- [ ] `Label` struct + `sign_label(label, signing_key)`
+- [ ] Label storage table (auto-migrated)
+- [ ] `/xrpc/com.atproto.label.subscribeLabels` WebSocket endpoint
+- [ ] `/.well-known/did.json` with labeler service endpoint
+- [ ] `[labeler] signing_key` config
+- [ ] `atrg label declare` CLI
+
+### 14. Server→Client Push
+- [ ] `atrg_push::sse_endpoint(channel)` — SSE via broadcast channel
+- [ ] `atrg_push::ws_endpoint(handler)` — authenticated WebSocket
+- [ ] JSON event envelope: `{ type, payload }`
+- [ ] Configurable keep-alive, max connections
+
+### 15. Observability
+- [ ] `GET /metrics` Prometheus endpoint
+- [ ] Default metrics: HTTP request count/duration, Jetstream lag, connections
+- [ ] OpenTelemetry: `tracing-opentelemetry` + OTLP exporter
+- [ ] `[telemetry] otlp_endpoint`, `service_name` config
+- [ ] `GET /admin/state` — pool stats, cache hit rates, Jetstream lag
+
+### v0.3.0 E2E Gate 🚧
+- [ ] Label creation + WebSocket subscription + signature verification
+- [ ] SSE: 1000 concurrent connections, no dropped events
+- [ ] WebSocket: authenticated message exchange
+- [ ] `/metrics` returns valid Prometheus format
+- [ ] OTLP trace appears in test collector
+
+---
+
+## Post-v0.3.0 Horizon
 
 | Feature | Notes |
 |---|---|
-| **Distributed identity cache (Redis)** | Replace single-process `moka` with Redis-backed cache for multi-instance deploys. |
-| **Multi-instance coordination** | Leader election for Jetstream/firehose consumers so only one instance ingests. |
-| **Background job queue** | Persistent task queue (SQLite or Redis-backed) for deferred work (e.g., backfill indexing). |
-| **Plugin / middleware registry** | Community-contributed middleware published as separate crates, discoverable via a registry. |
-| **`atrg-bluesky` convenience crate** | Out-of-tree, community-managed crate bundling `app.bsky.*` lexicon types for devs building Bluesky-compatible apps. Explicitly not part of this repository. |
-| **Account management helpers** | Handle changes, account migration, account deletion event handling. |
-| **Lexicon hot-reload** | Re-run codegen on lexicon file changes during `atrg dev` without full rebuild. |
-| **GraphQL gateway** | Optional GraphQL layer over XRPC for frontend devs who prefer it. |
+| Distributed identity cache (Redis) | Multi-instance deploys |
+| Multi-instance coordination | Leader election for consumers |
+| Background job queue | Persistent deferred work |
+| Plugin / middleware registry | Community crates |
+| `atrg-bluesky` convenience crate | Out-of-tree `app.bsky.*` types |
+| Account management helpers | Handle changes, migrations, deletions |
+| Lexicon hot-reload | Re-run codegen without full rebuild |
+| MCP server integration (`atrg-mcp`) | AI-powered admin tooling |
 
 ---
 
 ## Phase Dependency Graph
 
 ```
-Phase 0 (workspace, +identity/codegen/testing crate skeletons)
+Phase 0–6 (v0.1.0: skeleton, auth, Jetstream, XRPC, codegen, polish)
     │
     ▼
-Phase 1 (skeleton + JSON server + AppState{identity})
+v0.1.0 RELEASE
     │
-    ▼
-Phase 2 (atrg-identity → OAuth → JWT verify → token refresh) ──┐
-    │                                                            │
-    ▼                                                            │
-Phase 3 (Jetstream: backpressure, ZSTD dict, metrics) ───────────┤
-    │                                                            │
-    ▼                                                            │
-Phase 4 (XRPC + XrpcError envelope + atrg-codegen) ──────────────┤
-    │                                                            │
-    ▼                                                            ▼
-Phase 5 (atrg-testing + social template + todo example) ─► Phase 6 (security headers, docs, release)
-                                                                │
-                                                          v0.1.0 RELEASE
-                                                                │
-                          ┌─────────────────────────────────────┼──────────────────────┐
-                          │                                     │                      │
-                          ▼                                     ▼                      ▼
-                    Phase 7 (atrg-repo:              Phase 8 (atrg-firehose:    Phase 11 (production
-                     record CRUD, blobs,              relay subscription,        hardening: graceful
-                     AT-URI helpers)                   CAR decoding, cursor)      shutdown, rate limit,
-                          │                                     │               Postgres, env vars,
-                          │                                     │               Dockerfile)
-                          ▼                                     ▼                      │
-                    Phase 9 (atrg-feed:              Phase 10 (atrg-label:             │
-                     feed generator                   labeler framework,               │
-                     framework)                       label signing,                   │
-                          │                           WebSocket subscription)           │
-                          │                                     │                      │
-                          └──────────────┬──────────────────────┘──────────────────────┘
-                                         │
-                                   v0.2.0 RELEASE
-                                         │
-                              ┌──────────┴──────────┐
-                              ▼                     ▼
-                        Phase 12              Phase 13
-                        (SSE, WebSocket,      (Prometheus, OTLP,
-                         notifications)        admin endpoints)
-                              │                     │
-                              └──────────┬──────────┘
-                                         │
-                                   v0.3.0 RELEASE
+    ├────────────────┬───────────────┬─────────────────┬────────────────┐
+    ▼                ▼               ▼                 ▼                ▼
+  §7 Infra         §8 Auth &       §9 Data &        §10 Events &    §11-12 DX &
+  Fixes            Access          Storage          Firehose       Hardening
+  (migrations,    (API keys,      (blobs,          (EventRouter,  (multi-binary,
+   Postgres,       RBAC,           repo,            firehose,      email, Docker,
+   AppState,       bans,           cursor)          feeds)         graceful
+   client-meta,    admin                                           shutdown,
+   cross-origin,   bootstrap)                                      rate limit)
+   env vars,
+   TID/AT-URI)
+    │                │               │                 │                │
+    └────────────────┴───────────────┴─────────────────┴────────────────┘
+                                     │
+                               v0.2.0 RELEASE
+                                     │
+                          ┌──────────┼──────────┐
+                          ▼          ▼          ▼
+                       §13 Label  §14 Push   §15 Observ.
+                          │          │          │
+                          └──────────┼──────────┘
+                                     │
+                               v0.3.0 RELEASE
 ```
 
-Phases 2, 3, and 4 are mostly independent after Phase 1 lands and could be parallelized across contributors, but Phase 5 depends on all three (especially Phase 4's codegen for the `todo` example), and Phase 6 depends on everything.
-
-Within Phase 2, sub-phase 2.0 (`atrg-identity`) blocks sub-phases 2.4b (JWT verification) and 2.4c (token refresh) because both depend on the resolver + cache being in `AppState`.
-
-Post-v0.1.0: Phases 7, 8, and 11 are independent and can be parallelized. Phase 9 depends on Phase 7 (record helpers). Phase 10 depends on Phase 8 (firehose/WebSocket patterns). Phases 12 and 13 depend on all prior phases being stable.
+All v0.2.0 sections (§7–12) are independent and can be parallelized. The v0.2.0 E2E test suite is the single release gate — all tests green = ship.

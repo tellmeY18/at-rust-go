@@ -1,0 +1,24 @@
+[package]
+name = "atrg-email"
+description = "SMTP email and OTP verification for at-rust-go"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+atrg-db = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+serde = { workspace = true }
+sqlx = { workspace = true, features = ["sqlite"] }
+rand = { workspace = true }
+lettre = { version = "0.11", features = ["tokio1-native-tls", "builder", "smtp-transport"], default-features = false }
+tokio = { workspace = true }
+
+[features]
+default = ["sqlite"]
+sqlite = ["atrg-db/sqlite"]
+postgres = ["atrg-db/postgres"]

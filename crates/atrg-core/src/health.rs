@@ -72,6 +72,7 @@ mod tests {
                 secret_key: "test-secret-key-for-health-tests".into(),
                 cors_origins: vec![],
                 environment: "development".into(),
+                admin_dids: vec![],
             },
             auth: AuthConfig {
                 client_id: "http://localhost:3000/client-metadata.json".into(),
@@ -96,6 +97,7 @@ mod tests {
             identity: Arc::new(atrg_identity::IdentityResolver::with_defaults(
                 reqwest::Client::new(),
             )),
+            extensions: Arc::new(crate::state::Extensions::new()),
         }
     }
 

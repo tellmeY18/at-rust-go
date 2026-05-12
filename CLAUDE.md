@@ -894,3 +894,248 @@ async fn test_index_returns_json() {
 - Keep files under ~300 lines. Split when they grow.
 - Prefer `Arc<T>` over `Mutex<T>` for shared read-only state in `AppState`.
 - If state needs mutation at runtime, use `tokio::sync::RwLock<T>` inside `Arc`.
+
+---
+
+## Lessons from changala.app — Real-World ATProto App Patterns
+
+> [changala.app](https://github.com/changala-social/changala.app) is the flagship application built on atrg. It is a federated social learning platform with 62 XRPC endpoints, 156 generated types, 9 Postgres migration files, S3 blob storage, SMTP email, API key auth, MCP server integration, and a Cargo workspace split into Ring (write server) + Aggregator (read-only firehose subscriber) + shared types. Analyzing its real-world usage reveals exactly where atrg helped, where atrg fell short, and what the framework must add, improve, or remove to make building apps like this dramatically easier.
+
+### What Worked Well (Keep & Strengthen)
+
+1. **`AtrgApp` builder pattern.** Both `changala-ring` and `changala-aggregator` use `AtrgApp::new().mount(routes).run().await` as their entry point. The builder is the right abstraction — keep it.
+2. **`atrg.toml` config.** The structured config with `[app]`, `[auth]`, `[database]`, `[jetstream]` sections is clean. Changala added a `[changala]` app-specific section — this pattern should be first-class in the framework.
+3. **`RequireAuth` / `AuthUser` extractors.** Used in every authenticated handler. The dual-path (cookie + bearer) works. Keep it.
+4. **`atrg_xrpc::xrpc_router()` and `XrpcError`.** The XRPC router factory with error envelope is used exactly as designed. Clean and correct.
+5. **Jetstream `on_event` handler.** The aggregator uses `AtrgApp::on_event(handle_event)` and it works. The event dispatcher pattern (match on `commit.collection`) is simple and effective.
+6. **`atrg generate` codegen.** Generates 156 typed structs from 74 lexicon JSON files. This is the single biggest productivity win — eliminates all hand-written ATProto data types.
+7. **Cursor-based pagination convention.** Used by every list/feed endpoint. The `?cursor=&limit=` pattern is correct.
+
+### What Changala Had to Build Itself (atrg Gaps)
+
+These are features changala.app needed that atrg did not provide, forcing the app to implement them from scratch. Each of these is a candidate for inclusion in the framework.
+
+#### 1. App-Specific Config Sections (`[changala]` in `atrg.toml`)
+Changala adds `[changala]`, `[changala.s3]`, `[changala.smtp]` sections to `atrg.toml` and manually parses them with 20+ lines of raw TOML deserialization. atrg should provide a typed hook for app-specific config:
+
+```rust
+// Desired API — zero boilerplate
+let changala_config: ChangalaConfig = atrg_core::app_config("changala")?;
+```
+
+#### 2. Environment Variable Overrides for All Config
+Changala implements a 100+ line `apply_env_overrides()` method to map `CHANGALA_*` env vars to config fields. Every field needs an explicit `if let Ok(v) = std::env::var("CHANGALA_X")` block. atrg should provide automatic env var overlay on all config sections using the `ATRG_SECTION__KEY` convention, and expose a helper for app sections:
+
+```rust
+// Desired: automatic overlay from MYAPP_S3__ENDPOINT → [myapp.s3] endpoint
+let config: MyConfig = atrg_core::app_config_with_env("myapp", "MYAPP")?;
+```
+
+#### 3. Separate Migration Namespaces
+This is the **most painful gap**. Changala had to write a **custom migration runner** (50+ lines) because atrg's `sqlx::migrate!()` and the app's migrations conflict on the `_sqlx_migrations` tracking table. atrg's migrator sees changala's version numbers and errors with "migration N was previously applied but is missing." The framework must support app-specific migration directories with isolated tracking tables out of the box:
+
+```rust
+// What Changala does today (50 lines of boilerplate):
+async fn run_changala_migrations(pool: &PgPool) -> anyhow::Result<()> {
+    sqlx::raw_sql("CREATE TABLE IF NOT EXISTS _changala_migrations (...)").execute(pool).await?;
+    let migrator = sqlx::migrate!("./ring_migrations");
+    for migration in migrator.migrations.iter() {
+        // manual check, manual apply, manual tracking row insert...
+    }
+}
+
+// What atrg should provide:
+AtrgApp::new()
+    .with_migrations_dir("./ring_migrations")
+    .with_migrations_table("_changala_migrations")
+```
+
+#### 4. Postgres Support (Feature-Flagged)
+Changala uses Postgres, not SQLite. atrg now has `features = ["postgres"]` on `atrg-core`, `atrg-auth`, `atrg-db` — but this was an afterthought. Every real ATProto app will need Postgres at scale. This feature gate must be first-class, well-tested, and a scaffold-time choice:
+
+```bash
+atrg new my-app --db postgres  # should just work
+```
+
+#### 5. S3-Compatible Blob Storage
+Every note and brain node stores content in S3 via a content-addressed blob store. Changala built an entire `S3BlobStore` struct (90 lines) with `put()`, `get()`, `exists()`, `delete()` and a `compute_cid()` function. This is a universal need for any ATProto app that handles content beyond tiny PDS records.
+
+```rust
+// Changala's custom blob store
+pub struct S3BlobStore { bucket: s3::Bucket }
+impl S3BlobStore {
+    pub async fn put(&self, data: &[u8]) -> anyhow::Result<String> {
+        let cid = compute_cid(data);  // sha256-hexencoded
+        self.bucket.put_object(&cid, data).await?;
+        Ok(cid)
+    }
+    pub async fn get(&self, cid: &str) -> anyhow::Result<Vec<u8>> { ... }
+}
+
+// atrg should provide: state.blobs.put(data).await?
+```
+
+#### 6. Email / OTP Verification
+Institution email verification via SMTP (lettre) with a two-step OTP flow: generate code → store in DB → send email → verify code → create membership. Changala built this from scratch with 80 lines of SMTP integration (starttls + TLS + none encryption modes, Gmail app password support, dev-mode logging fallback). Common enough pattern for AT Protocol apps that it should be an opt-in module.
+
+#### 7. RBAC (Role-Based Access Control)
+Changala has a 3-tier role hierarchy (student → classRep → admin) with per-resource scoping (classRep is scoped to a specific course). The framework's `RequireAuth` only provides "logged in or not." Every handler that needs role checks does raw SQL:
+
+```rust
+// What Changala does in every admin handler:
+let role = sqlx::query_scalar::<_, String>("SELECT role FROM memberships WHERE did = $1")
+    .bind(&user.did).fetch_optional(&db).await?;
+if role.as_deref() != Some("admin") {
+    return Err(XrpcError { name: Forbidden, message: "Admin only" });
+}
+
+// What atrg should provide:
+async fn create_course(RequireRole(Admin): RequireRole<Admin>, ...) -> ...
+```
+
+#### 8. Ban / Moderation System
+DID-based ban table with optional TTL (permanent or timed). `check_not_banned(did)` must run before every write operation. Changala has 4 moderation endpoints (ban, lift, list, check) plus middleware — all hand-written. This is a universal ATProto app need.
+
+#### 9. API Key Authentication
+Changala built an entire API key system — `chg_*` prefixed keys, `api_keys` table with hash/prefix/scopes, and a 130-line middleware (`api_key_auth.rs`) that bridges API keys to atrg sessions by:
+1. Intercepting `Bearer chg_*` tokens
+2. Validating against `api_keys` table
+3. Upserting a synthetic row into `atrg_sessions` with a deterministic ID
+4. Rewriting the `Authorization` header so `RequireAuth` picks it up
+
+This is a terrible workaround. atrg's `RequireAuth` should natively support API key auth.
+
+#### 10. Cross-Origin Auth Handoff (`/auth/complete`)
+The OAuth callback sets an HttpOnly cookie on the Ring's domain, but the frontend is on a different domain (Cloudflare Pages at `changala-app.pages.dev`). The cookie is invisible to the frontend. Changala built a 60-line `/auth/complete` endpoint that:
+1. Reads the `atrg_session` cookie (same-origin, so it works)
+2. Looks up the session in the DB
+3. Redirects to the frontend with `?token=<id>&did=<did>&handle=<handle>` in the URL
+
+atrg should handle this cross-origin auth pattern natively via `[auth] post_login_redirect`.
+
+#### 11. Custom `client-metadata.json` Derivation
+atrg's built-in `client-metadata.json` uses `http://{host}:{port}` for `client_uri` which produces `http://0.0.0.0:3000` — rejected by every PDS. Changala overrides the entire endpoint (30 lines) to derive `client_uri` from `client_id` by stripping the path. The framework should do this correctly by default.
+
+#### 12. Global App State via `once_cell`
+Changala uses `once_cell::sync::OnceCell<Arc<Changala>>` for global state because atrg's `AppState` struct is closed — no extension point for app-specific fields. The `Changala` struct holds the Postgres pool, S3 blob store, SMTP config, email domain allowlist, and admin DIDs. Every handler calls `crate::state::get()` to access it. This bypasses Axum's state system entirely.
+
+```rust
+// Changala's workaround (state.rs)
+static INSTANCE: OnceCell<Arc<Changala>> = OnceCell::new();
+pub fn init(changala: Changala) { INSTANCE.set(Arc::new(changala)).expect("already init"); }
+pub fn get() -> &'static Arc<Changala> { INSTANCE.get().expect("not init") }
+
+// In every handler:
+let app = crate::state::get();
+sqlx::query(...).execute(&app.db).await?;
+
+// atrg should provide:
+let changala = state.extension::<Changala>();
+```
+
+#### 13. Multi-Binary Architecture
+Changala ships two binaries from one Cargo workspace:
+- `changala-ring` — write server: OAuth, identity, courses, sessions, notes, brain CRUD, blob storage, moderation, archives, API keys, MCP server. Does NOT subscribe to Jetstream.
+- `changala-aggregator` — read-only: firehose subscriber, feeds, search, graph index, notifications, keyword histograms. Does NOT handle writes.
+- `changala-shared` — shared types crate (generated from lexicons)
+
+atrg's scaffold and documentation assume a single binary. The framework should support the Write Server + AppView pattern as a first-class scaffold template.
+
+#### 14. MCP (Model Context Protocol) Server
+Changala integrates an MCP server for AI-assisted institution administration (create courses, enroll students, manage sessions via Claude/GPT). The Ring runs MCP as a sidecar route (`/mcp`) gated by API key auth middleware. MCP tools map 1:1 to Ring XRPC endpoints. This is a forward-looking pattern — atrg could provide `atrg-mcp` for apps that want AI-driven admin tooling.
+
+### What atrg Should Change or Remove
+
+1. **SQLite-only default is insufficient.** Real ATProto apps need Postgres. Make the database backend a required choice at `atrg new` time, not a hidden feature flag.
+2. **Migration runner must be pluggable.** The current `sqlx::migrate!()` call in `AtrgApp::run()` conflicts with app migrations. Provide `with_migrations_dir("./my_migrations")` and use separate tracking tables.
+3. **`client-metadata.json` origin derivation is broken.** The `http://{host}:{port}` approach fails when `host` is `0.0.0.0` or when the public URL differs from the bind address. Derive from `client_id` by default.
+4. **No `atrg-repo` in v0.1.0 is a mistake.** Every real app needs TID generation and AT-URI construction on day one. `atrg_repo::Tid::now()` is used extensively in changala. Move basic TID/AT-URI utilities to v0.1.0.
+5. **`AppState` needs an extension mechanism.** Adding app-specific fields (`blobs`, `smtp`, `allowed_email_domains`) to `AppState` is impossible without forking. Provide `AppState::extensions()` or a generic `TypeMap`.
+6. **`on_event` handler needs access to app state.** The current signature `Fn(JetstreamEvent, AppState)` only passes framework state. App state must be accessible too (changala uses global `once_cell` as a workaround).
+7. **Auth routes should be opt-in mountable.** Changala uses `.with_auth_routes(atrg_auth::routes::routes())` and `.with_cleanup_task(...)` rather than auto-mounting. This explicit control is better — make it the default API.
+8. **Social template (`--template social`) is too opinionated.** Replace with `--template multi-binary` which reflects what real ATProto apps actually need: separate write server + read aggregator.
+
+### Config Patterns from Production
+
+Production changala.app uses these config patterns that atrg should make standard:
+
+```toml
+# ── atrg.toml patterns that should be first-class ──────────────────
+
+[auth]
+# Cross-origin SPA redirect after OAuth callback completes.
+# Without this, SPAs on separate domains cannot receive the session token.
+post_login_redirect = "https://frontend.example.com/login"
+
+[app]
+# Controls cookie Secure flag, security headers, log format.
+environment = "production"
+
+# ── App-specific sections — framework should parse & pass through ──
+
+[myapp]
+database_url = "postgres://user:pass@host:5432/myapp"
+admin_dids = ["did:plc:abc", "did:plc:def"]
+allowed_email_domains = ["nitc.ac.in", "mbcet.ac.in"]
+
+[myapp.s3]
+endpoint = "http://minio:9000"
+bucket = "my-blobs"
+region = "us-east-1"
+access_key = ""
+secret_key = ""
+
+[myapp.smtp]
+host = "smtp.gmail.com"
+port = 587
+username = "noreply@example.com"
+password = "xxxx xxxx xxxx xxxx"  # Gmail 2FA app password
+from = "MyApp <noreply@example.com>"
+encryption = "starttls"  # "starttls" | "tls" | "none"
+```
+
+Every field should be overridable via environment variables using the `MYAPP_SECTION__KEY` convention:
+
+| Env Var | Config Path |
+|---|---|
+| `MYAPP_DATABASE_URL` | `[myapp] database_url` |
+| `MYAPP_S3__ENDPOINT` | `[myapp.s3] endpoint` |
+| `MYAPP_SMTP__HOST` | `[myapp.smtp] host` |
+| `MYAPP_ADMIN_DIDS` | `[myapp] admin_dids` (comma-separated) |
+
+### Architecture Patterns for ATProto Apps
+
+Based on changala.app's architecture, these are the common patterns atrg should make trivially easy:
+
+1. **Write Server + Read Aggregator** — Separate binaries: one handles writes/auth/blobs, the other subscribes to the firehose and materialises read views. The write server does NOT call `on_event`. The aggregator does NOT serve write endpoints. atrg should scaffold this pattern with `--template multi-binary`.
+
+2. **Content-Addressed Blob Storage** — Notes, files, any binary content stored by SHA-256 CID in S3. Records on the PDS hold only a pointer (`ringRef` in changala's case). atrg should provide `atrg-blob` with S3 + filesystem backends.
+
+3. **Firehose Materialisation** — The aggregator's event handler matches on `commit.collection` and INSERTs/UPSERTs into materialised tables. All writes are idempotent (`ON CONFLICT DO NOTHING` or `ON CONFLICT DO UPDATE`). atrg should provide an `EventRouter` that eliminates the match-dispatch boilerplate.
+
+4. **Admin Bootstrap** — First admin provisioned via env var (`ADMIN_DIDS=did:plc:xxx`), not via API endpoint. Critical for initial deployment. The Ring auto-provisions on startup with upsert semantics.
+
+5. **API Key + OAuth Dual Auth** — API keys for programmatic/MCP access (`chg_*` prefix), OAuth for browser users, both flowing through the same `RequireAuth` extractor. No separate middleware stack.
+
+6. **Email Verification Flow** — OTP-based email verification for institution/org membership, decoupled from AT Protocol identity. Two-step flow: request OTP → verify OTP → create membership record. Dev mode logs OTPs to stdout.
+
+7. **Per-Resource Role Scoping** — Roles like `classRep` are scoped to a specific resource (course), not instance-wide. The role check takes both the role name AND the resource ID.
+
+8. **Custom TOML Section + Env Overlay** — App config lives in a custom `[myapp]` section of `atrg.toml` with env var overrides for production/k8s. This is the most common config pattern.
+
+### Changala's Dependency Stack (What Real Apps Pull In)
+
+Beyond atrg's own dependencies, changala.app needed:
+
+| Crate | Purpose | Should atrg provide? |
+|---|---|---|
+| `rust-s3` | S3 blob storage | Yes (`atrg-blob`) |
+| `sha2` + `hex` | Content addressing (CID) | Yes (inside `atrg-blob`) |
+| `lettre` | SMTP email | Maybe (`atrg-email`) |
+| `rand` | OTP generation | Maybe (part of email module) |
+| `chrono` | Timestamps in handlers | No (app concern) |
+| `once_cell` | Global app state workaround | No (fix `AppState` extensions instead) |
+| `urlencoding` | URL parameter encoding | No (app concern) |
+| `schemars` | JSON schema generation | No (app concern) |
+| `rmcp` | MCP server | Maybe (`atrg-mcp`, post-v0.2.0) |
+| `reqwest` | HTTP client for external APIs | No (already in `AppState.http`) |

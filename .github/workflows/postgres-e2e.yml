@@ -1,0 +1,102 @@
+name: Postgres E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pg-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_LOG: info
+
+jobs:
+  postgres-e2e:
+    name: Postgres E2E
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: atrg_test
+          POSTGRES_PASSWORD: atrg_test
+          POSTGRES_DB: atrg_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atrg_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      TEST_DATABASE_URL: postgres://atrg_test:atrg_test@localhost:5432/atrg_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: postgres-e2e
+
+      - name: Wait for Postgres
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5432 -U atrg_test 2>/dev/null; then
+              echo "Postgres ready after ${i}s"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "FAIL: Postgres not ready within 30s"
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Grant CREATE DATABASE privilege
+        env:
+          PGPASSWORD: atrg_test
+        run: |
+          psql -h localhost -U atrg_test -d atrg_test -c "SELECT 1" || true
+          # The atrg_test user is already a superuser in the container
+
+      - name: Run Postgres E2E tests
+        run: |
+          cargo test \
+            --package atrg-db \
+            --test postgres_e2e \
+            --features postgres \
+            -- --test-threads=1
+        env:
+          TEST_DATABASE_URL: postgres://atrg_test:atrg_test@localhost:5432/atrg_test
+
+      - name: Run workspace tests with Postgres feature
+        run: |
+          cargo test \
+            --workspace \
+            --features atrg-db/postgres,atrg-core/postgres,atrg-auth/postgres \
+            -- --test-threads=1
+        env:
+          TEST_DATABASE_URL: postgres://atrg_test:atrg_test@localhost:5432/atrg_test
+
+  # Gate job
+  postgres-e2e-pass:
+    name: Postgres E2E Gate ✓
+    if: always()
+    needs: [postgres-e2e]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check result
+        run: |
+          if [ "${{ needs.postgres-e2e.result }}" != "success" ]; then
+            echo "FAIL: Postgres E2E tests did not pass"
+            exit 1
+          fi
+          echo "All Postgres E2E tests passed ✓"

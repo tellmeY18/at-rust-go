@@ -23,6 +23,7 @@ pub async fn test_state() -> AppState {
             secret_key: "test-secret-key-at-least-32-chars!!".into(),
             cors_origins: vec![],
             environment: "development".into(),
+            admin_dids: vec![],
         },
         auth: AuthConfig {
             client_id: "http://localhost:3000/client-metadata.json".into(),
@@ -47,6 +48,7 @@ pub async fn test_state() -> AppState {
         identity: Arc::new(atrg_identity::IdentityResolver::with_defaults(
             reqwest::Client::new(),
         )),
+        extensions: std::sync::Arc::new(atrg_core::Extensions::new()),
     }
 }
 

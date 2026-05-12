@@ -15,6 +15,8 @@ pub enum AuthSource {
     Atrg,
     /// Authenticated via a PDS-issued AT Protocol JWT.
     AtprotoJwt,
+    /// Authenticated via a native API key (`Authorization: Bearer <prefix>_...`).
+    ApiKey,
 }
 
 /// A resolved authentication session, shared across all auth paths.

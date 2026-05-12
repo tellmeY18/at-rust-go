@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["sqlite"]
+sqlite = ["atrg-db/sqlite"]
+postgres = ["atrg-db/postgres"]
+
 [dependencies]
 tokio = { workspace = true }
 futures = { workspace = true }
@@ -19,6 +24,8 @@ reqwest = { workspace = true }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 sha2 = "0.10"
 dirs = "5"
+atrg-db = { workspace = true }
+sqlx = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

@@ -149,6 +149,7 @@ mod tests {
                     secret_key: "a]3)FRd9-x4bQ7Y!kN2mW#pL8v$Tz0cS".into(),
                     cors_origins: vec![],
                     environment: "development".into(),
+                    admin_dids: vec![],
                 },
                 auth: AuthConfig::default(),
                 database: DatabaseConfig::default(),
@@ -163,6 +164,7 @@ mod tests {
             identity: Arc::new(atrg_identity::IdentityResolver::with_defaults(
                 reqwest::Client::new(),
             )),
+            extensions: Arc::new(atrg_core::Extensions::new()),
         }
     }
 

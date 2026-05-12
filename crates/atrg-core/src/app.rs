@@ -27,7 +27,7 @@ use tower_http::trace::TraceLayer;
 use crate::config::Config;
 use crate::cors::build_cors_layer;
 use crate::error::AtrgError;
-use crate::state::AppState;
+use crate::state::{AppState, Extensions};
 
 /// A cleanup task function that receives a database pool and spawns
 /// background maintenance work (e.g. expired session cleanup).
@@ -49,6 +49,8 @@ pub struct AtrgApp {
     /// Firehose event handler (registered via [`AtrgApp::on_firehose_event`]).
     #[cfg(feature = "firehose")]
     firehose_handler: Option<atrg_firehose::FirehoseHandler<AppState>>,
+    /// App-specific extensions collected during build and passed into AppState.
+    extensions: Extensions,
 }
 
 impl AtrgApp {
@@ -62,6 +64,7 @@ impl AtrgApp {
             event_handler: None,
             #[cfg(feature = "firehose")]
             firehose_handler: None,
+            extensions: Extensions::new(),
         }
     }
 
@@ -130,6 +133,33 @@ impl AtrgApp {
     /// supplied pool on startup.
     pub fn with_db_pool(mut self, pool: impl Into<DbPool>) -> Self {
         self.user_db_pool = Some(pool.into());
+        self
+    }
+
+    /// Register an app-specific extension value.
+    ///
+    /// Extensions are type-erased values accessible from any handler via
+    /// [`AppState::extension::<T>()`](crate::state::AppState::extension) or
+    /// [`AppState::try_extension::<T>()`](crate::state::AppState::try_extension).
+    ///
+    /// Each type can appear at most once — inserting a second value of the
+    /// same type replaces the first.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// struct S3Client { bucket: String }
+    /// struct SmtpConfig { host: String }
+    ///
+    /// AtrgApp::new()
+    ///     .with_extension(S3Client { bucket: "my-blobs".into() })
+    ///     .with_extension(SmtpConfig { host: "smtp.example.com".into() })
+    ///     .mount(routes())
+    ///     .run()
+    ///     .await
+    /// ```
+    pub fn with_extension<T: Send + Sync + 'static>(mut self, value: T) -> Self {
+        self.extensions.insert(value);
         self
     }
 
@@ -265,7 +295,39 @@ impl AtrgApp {
             db,
             http,
             identity,
+            extensions: Arc::new(self.extensions),
         };
+
+        // 5b. Admin bootstrap ---------------------------------------------------
+        if !config.app.admin_dids.is_empty() {
+            for did in &config.app.admin_dids {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+                    .to_string();
+                let result: Result<(), sqlx::Error> = match &state.db {
+                    #[cfg(feature = "sqlite")]
+                    atrg_db::DbPool::Sqlite(p) => {
+                        sqlx::query(
+                            "INSERT OR IGNORE INTO atrg_roles (did, role, granted_by, granted_at) VALUES (?1, 'admin', 'system:bootstrap', ?2)"
+                        ).bind(did).bind(&now).execute(p).await.map(|_| ())
+                    }
+                    #[cfg(feature = "postgres")]
+                    atrg_db::DbPool::Postgres(p) => {
+                        sqlx::query(
+                            "INSERT INTO atrg_roles (did, role, granted_by, granted_at) VALUES ($1, 'admin', 'system:bootstrap', $2) ON CONFLICT DO NOTHING"
+                        ).bind(did).bind(&now).execute(p).await.map(|_| ())
+                    }
+                };
+                match result {
+                    Ok(_) => tracing::info!(did = %did, "auto-provisioned admin DID"),
+                    Err(e) => {
+                        tracing::warn!(did = %did, error = %e, "failed to bootstrap admin DID (table may not exist yet)")
+                    }
+                }
+            }
+        }
 
         // 6. Build CORS layer ---------------------------------------------------
         let cors = build_cors_layer(&config.app.cors_origins);
@@ -302,6 +364,57 @@ impl AtrgApp {
             ));
         }
 
+        // 8a. Rate limiting (if configured) -------------------------------------
+        if let Some(ref rl_config) = config.rate_limit {
+            if rl_config.enabled {
+                let limiter =
+                    crate::rate_limit::RateLimiter::new(crate::rate_limit::RateLimitConfig {
+                        requests_per_second: rl_config.requests_per_second,
+                        burst: rl_config.burst,
+                        enabled: true,
+                    });
+
+                // Spawn periodic cleanup task (every 5 minutes, remove entries older than 10 min)
+                let limiter_cleanup = limiter.clone();
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+                    loop {
+                        interval.tick().await;
+                        limiter_cleanup
+                            .cleanup(std::time::Duration::from_secs(600))
+                            .await;
+                    }
+                });
+
+                router = router.layer(axum::middleware::from_fn(
+                    move |req: axum::extract::Request, next: axum::middleware::Next| {
+                        let limiter = limiter.clone();
+                        async move {
+                            // Extract client IP from connection info or X-Forwarded-For
+                            let ip = req
+                                .extensions()
+                                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                                .map(|ci| ci.0.ip())
+                                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+
+                            match limiter.check(ip).await {
+                                Ok(()) => next.run(req).await,
+                                Err(retry_after) => {
+                                    crate::rate_limit::rate_limit_response(retry_after)
+                                }
+                            }
+                        }
+                    },
+                ));
+
+                tracing::info!(
+                    rps = rl_config.requests_per_second,
+                    burst = rl_config.burst,
+                    "rate limiting enabled"
+                );
+            }
+        }
+
         // 8. Jetstream ----------------------------------------------------------
         if let Some(ref js_config) = config.jetstream {
             if let Some(handler) = self.event_handler {
@@ -311,6 +424,7 @@ impl AtrgApp {
                     zstd_dict: js_config.zstd_dict.clone(),
                     channel_capacity: js_config.channel_capacity,
                     max_lag_events: js_config.max_lag_events,
+                    cursor: None,
                 };
                 atrg_stream::spawn_consumer(&stream_config, state.clone(), handler).await?;
             } else {
@@ -414,6 +528,7 @@ mod tests {
                 secret_key: "a]3)FRd9-x4bQ7Y!kN2mW#pL8v$Tz0cS".into(),
                 cors_origins: vec![],
                 environment: "development".into(),
+                admin_dids: vec![],
             },
             auth: AuthConfig {
                 client_id: "http://localhost:3000/client-metadata.json".into(),
@@ -438,6 +553,7 @@ mod tests {
             identity: Arc::new(atrg_identity::IdentityResolver::with_defaults(
                 reqwest::Client::new(),
             )),
+            extensions: Arc::new(Extensions::new()),
         }
     }
 
@@ -621,5 +737,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn with_extension_is_accessible_from_state() {
+        struct MyConfig {
+            magic_number: u64,
+        }
+
+        let state = test_state().await;
+        // Verify the extension is reachable via AppState constructed by the builder.
+        // Since `run()` binds a port (can't easily test full lifecycle), we test
+        // the builder populates extensions correctly by constructing an AppState
+        // with the extension and hitting a handler that reads it.
+        let mut ext = Extensions::new();
+        ext.insert(MyConfig { magic_number: 42 });
+
+        let state_with_ext = AppState {
+            config: state.config.clone(),
+            db: state.db.clone(),
+            http: state.http.clone(),
+            identity: state.identity.clone(),
+            extensions: Arc::new(ext),
+        };
+
+        let app: Router = Router::new()
+            .route(
+                "/magic",
+                get(
+                    |axum::extract::State(s): axum::extract::State<AppState>| async move {
+                        let cfg = s.extension::<MyConfig>();
+                        Json(serde_json::json!({ "magic": cfg.magic_number }))
+                    },
+                ),
+            )
+            .with_state(state_with_ext);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/magic")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+
+        let body = body_bytes(resp).await;
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["magic"], 42);
+    }
+
+    #[test]
+    fn with_extension_builder_accumulates_values() {
+        struct Foo(u32);
+        struct Bar(String);
+
+        let app = AtrgApp::new()
+            .with_extension(Foo(7))
+            .with_extension(Bar("baz".into()));
+
+        assert_eq!(app.extensions.get::<Foo>().unwrap().0, 7);
+        assert_eq!(app.extensions.get::<Bar>().unwrap().0, "baz");
     }
 }

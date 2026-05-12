@@ -77,6 +77,15 @@ pub fn apply_env_overrides(config: &mut Config) {
             .collect();
     }
 
+    if let Ok(val) = std::env::var("ATRG_APP__ADMIN_DIDS") {
+        tracing::debug!(key = "ATRG_APP__ADMIN_DIDS", "applying env override");
+        config.app.admin_dids = val
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+
     // -- [auth] ---------------------------------------------------------
     if let Ok(val) = std::env::var("ATRG_AUTH__CLIENT_ID") {
         tracing::debug!(key = "ATRG_AUTH__CLIENT_ID", "applying env override");
@@ -91,6 +100,14 @@ pub fn apply_env_overrides(config: &mut Config) {
     if let Ok(val) = std::env::var("ATRG_AUTH__SCOPE") {
         tracing::debug!(key = "ATRG_AUTH__SCOPE", "applying env override");
         config.auth.scope = val;
+    }
+
+    if let Ok(val) = std::env::var("ATRG_AUTH__POST_LOGIN_REDIRECT") {
+        tracing::debug!(
+            key = "ATRG_AUTH__POST_LOGIN_REDIRECT",
+            "applying env override"
+        );
+        config.auth.post_login_redirect = val;
     }
 
     // -- [database] -----------------------------------------------------
@@ -161,6 +178,7 @@ mod tests {
                 secret_key: "abcdefghijklmnopqrstuvwxyz123456".into(),
                 cors_origins: vec![],
                 environment: "development".into(),
+                admin_dids: vec![],
             },
             auth: AuthConfig {
                 client_id: "http://localhost:3000/client-metadata.json".into(),

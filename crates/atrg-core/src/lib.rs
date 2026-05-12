@@ -19,7 +19,7 @@ pub mod shutdown;
 pub use app::AtrgApp;
 pub use config::Config;
 pub use error::{AtrgError, AtrgResult};
-pub use state::AppState;
+pub use state::{AppState, Extensions};
 
 pub use rate_limit::{RateLimitConfig, RateLimiter};
 pub use shutdown::shutdown_signal;

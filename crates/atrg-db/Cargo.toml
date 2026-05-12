@@ -23,6 +23,17 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
+atrg-core = { workspace = true, default-features = false, features = ["postgres"] }
+atrg-auth = { workspace = true, default-features = false, features = ["postgres"] }
+atrg-stream = { workspace = true, features = ["postgres"] }
+atrg-email = { workspace = true, features = ["postgres"] }
+atrg-identity = { workspace = true }
+rand = { workspace = true }
+reqwest = { workspace = true }
+sqlx = { workspace = true, features = ["postgres"] }
+serde_json = { workspace = true }
+axum = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
 
 [package.metadata.docs.rs]
 all-features = true
