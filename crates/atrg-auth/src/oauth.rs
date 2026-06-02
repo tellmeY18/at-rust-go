@@ -207,9 +207,30 @@ pub fn create_dpop_proof(
 // 3. PDS OAuth Metadata Discovery
 // ---------------------------------------------------------------------------
 
-/// OAuth authorization server metadata from a PDS.
+/// OAuth protected-resource metadata from a PDS.
 ///
-/// Fetched from `{pds_endpoint}/.well-known/oauth-authorization-server`.
+/// Fetched from `{pds_endpoint}/.well-known/oauth-protected-resource`. In the
+/// AT Protocol OAuth model the PDS is a *resource server* that may delegate
+/// authorization to a separate *authorization server* (e.g. Bluesky PDS hosts
+/// on `*.host.bsky.network` delegate to `https://bsky.social`). The
+/// `authorization_servers` array names the issuer(s) whose
+/// `oauth-authorization-server` document holds the real endpoints.
+///
+/// See the AT Protocol OAuth specification (RFC 9728, OAuth 2.0 Protected
+/// Resource Metadata) for the full set of fields; only the one atrg needs is
+/// captured here.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProtectedResourceMetadata {
+    /// Authorization servers this resource server delegates to. The first
+    /// entry is used as the authorization server base.
+    #[serde(default)]
+    pub authorization_servers: Vec<String>,
+}
+
+/// OAuth authorization server metadata.
+///
+/// Fetched from `{auth_server}/.well-known/oauth-authorization-server`, where
+/// `auth_server` is resolved from the PDS's protected-resource metadata.
 /// See the AT Protocol OAuth specification for the full set of fields;
 /// only the ones atrg needs are captured here.
 #[derive(Debug, Clone, Deserialize)]
@@ -230,27 +251,67 @@ pub struct PdsOAuthMetadata {
     pub scopes_supported: Vec<String>,
 }
 
-/// Discover the PDS's OAuth authorization server metadata.
+/// Resolve the authorization server base for a PDS.
 ///
-/// Fetches `{pds_endpoint}/.well-known/oauth-authorization-server` and
-/// parses the JSON response into [`PdsOAuthMetadata`].
-pub async fn discover_pds_oauth_metadata(
+/// Fetches `{pds_endpoint}/.well-known/oauth-protected-resource` and returns
+/// the first entry of `authorization_servers`. Per the AT Protocol OAuth spec
+/// the PDS is a resource server that may delegate to a separate authorization
+/// server, so this indirection is required and cannot be skipped.
+///
+/// If the protected-resource document is unavailable (older self-hosted PDSes
+/// that predate the endpoint), the caller should fall back to treating the PDS
+/// host as its own authorization server — see [`discover_pds_oauth_metadata`].
+async fn discover_authorization_server(
     http: &reqwest::Client,
     pds_endpoint: &str,
-) -> anyhow::Result<PdsOAuthMetadata> {
+) -> anyhow::Result<Option<String>> {
     let url = format!(
-        "{}/.well-known/oauth-authorization-server",
+        "{}/.well-known/oauth-protected-resource",
         pds_endpoint.trim_end_matches('/')
     );
 
-    tracing::debug!(url = %url, "discovering PDS OAuth metadata");
+    tracing::debug!(url = %url, "discovering PDS protected-resource metadata");
+
+    let response = http.get(&url).send().await?;
+    let status = response.status();
+    if !status.is_success() {
+        // Not fatal — the caller falls back to the PDS host itself.
+        tracing::debug!(
+            url = %url,
+            status = %status,
+            "protected-resource metadata unavailable, will fall back to PDS host"
+        );
+        return Ok(None);
+    }
+
+    let metadata: ProtectedResourceMetadata = response.json().await?;
+    Ok(metadata
+        .authorization_servers
+        .into_iter()
+        .find(|s| !s.trim().is_empty()))
+}
+
+/// Fetch authorization-server metadata from an explicit auth-server base.
+///
+/// Fetches `{auth_server}/.well-known/oauth-authorization-server` and parses
+/// the JSON response into [`PdsOAuthMetadata`].
+async fn fetch_authorization_server_metadata(
+    http: &reqwest::Client,
+    auth_server: &str,
+) -> anyhow::Result<PdsOAuthMetadata> {
+    let url = format!(
+        "{}/.well-known/oauth-authorization-server",
+        auth_server.trim_end_matches('/')
+    );
+
+    tracing::debug!(url = %url, "discovering authorization-server metadata");
 
     let response = http.get(&url).send().await?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         anyhow::bail!(
-            "PDS OAuth metadata discovery failed: status={}, url={}, body={}",
+            "OAuth authorization-server metadata discovery failed: status={}, url={}, body={}",
             status,
             url,
             body
@@ -263,10 +324,42 @@ pub async fn discover_pds_oauth_metadata(
         authorization_endpoint = %metadata.authorization_endpoint,
         token_endpoint = %metadata.token_endpoint,
         par_endpoint = ?metadata.pushed_authorization_request_endpoint,
-        "discovered PDS OAuth metadata"
+        "discovered authorization-server metadata"
     );
 
     Ok(metadata)
+}
+
+/// Discover the OAuth authorization server metadata for a PDS.
+///
+/// Implements the two-step AT Protocol OAuth discovery flow:
+///
+/// 1. `GET {pds}/.well-known/oauth-protected-resource` to find the
+///    authorization server the PDS delegates to (`authorization_servers[0]`).
+/// 2. `GET {auth_server}/.well-known/oauth-authorization-server` for the real
+///    `authorization_endpoint` / `token_endpoint`.
+///
+/// If step 1 yields no authorization server (the endpoint is missing or lists
+/// none), falls back to treating the PDS host itself as the authorization
+/// server. This keeps PDSes that double as their own authorization server
+/// (e.g. many self-hosted deployments) working, while correctly handling PDSes
+/// that delegate elsewhere (e.g. all `*.bsky.social` accounts, whose PDS hosts
+/// delegate to `https://bsky.social`).
+pub async fn discover_pds_oauth_metadata(
+    http: &reqwest::Client,
+    pds_endpoint: &str,
+) -> anyhow::Result<PdsOAuthMetadata> {
+    let auth_server = discover_authorization_server(http, pds_endpoint)
+        .await?
+        .unwrap_or_else(|| {
+            tracing::debug!(
+                pds = %pds_endpoint,
+                "no delegated authorization server; treating PDS host as authorization server"
+            );
+            pds_endpoint.trim_end_matches('/').to_string()
+        });
+
+    fetch_authorization_server_metadata(http, &auth_server).await
 }
 
 // ---------------------------------------------------------------------------
@@ -678,6 +771,42 @@ mod tests {
     }
 
     // -- PDS metadata deserialization ---------------------------------------
+
+    // -- Protected-resource metadata deserialization ------------------------
+
+    #[test]
+    fn protected_resource_metadata_reads_authorization_servers() {
+        // Shape returned by a Bluesky PDS host that delegates to bsky.social.
+        let json = r#"{
+            "resource": "https://puffball.us-east.host.bsky.network",
+            "authorization_servers": ["https://bsky.social"],
+            "scopes_supported": [],
+            "bearer_methods_supported": ["header"]
+        }"#;
+
+        let meta: ProtectedResourceMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(meta.authorization_servers, vec!["https://bsky.social"]);
+    }
+
+    #[test]
+    fn protected_resource_metadata_self_hosted() {
+        // Shape returned by a PDS that is its own authorization server.
+        let json = r#"{
+            "resource": "https://tngl.sh",
+            "authorization_servers": ["https://tngl.sh"]
+        }"#;
+
+        let meta: ProtectedResourceMetadata = serde_json::from_str(json).unwrap();
+        assert_eq!(meta.authorization_servers, vec!["https://tngl.sh"]);
+    }
+
+    #[test]
+    fn protected_resource_metadata_defaults_empty() {
+        // Missing authorization_servers must not error — caller falls back.
+        let json = r#"{ "resource": "https://pds.example.com" }"#;
+        let meta: ProtectedResourceMetadata = serde_json::from_str(json).unwrap();
+        assert!(meta.authorization_servers.is_empty());
+    }
 
     #[test]
     fn pds_metadata_deserializes_full() {

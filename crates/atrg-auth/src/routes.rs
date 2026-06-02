@@ -146,14 +146,23 @@ async fn login(
 
     tracing::debug!(did = %did, pds = %pds_endpoint, "resolved handle");
 
-    // 2. Discover PDS OAuth metadata
+    // 2. Discover PDS OAuth metadata (protected-resource → authorization-server)
     let metadata = oauth::discover_pds_oauth_metadata(&state.http, pds_endpoint)
         .await
         .map_err(|e| {
-            AtrgError::Internal(anyhow::anyhow!(
-                "failed to discover OAuth metadata for PDS '{}': {}",
-                pds_endpoint,
-                e
+            // Surface a clean, user-facing 4xx rather than a bare 500: a
+            // discovery failure means we could not reach or parse the PDS's
+            // OAuth metadata, which the user can act on (wrong handle, PDS
+            // down) and which is not an internal fault of this server.
+            tracing::warn!(
+                handle = %handle,
+                pds = %pds_endpoint,
+                error = %e,
+                "OAuth metadata discovery failed"
+            );
+            AtrgError::BadRequest(format!(
+                "could not discover OAuth configuration for PDS '{}': {}",
+                pds_endpoint, e
             ))
         })?;
 
