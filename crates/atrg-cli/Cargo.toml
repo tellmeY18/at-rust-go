@@ -2,7 +2,7 @@
 name = "atrg-cli"
 description = "CLI for at-rust-go: scaffold, dev, migrate, build AT Protocol API projects"
 readme = "README.md"
-version.workspace = true
+version = "0.2.3"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

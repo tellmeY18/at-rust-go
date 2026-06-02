@@ -2,7 +2,7 @@
 name = "atrg-repo"
 description = "Record repository helpers: CRUD, blob uploads, AT-URI and TID utilities for at-rust-go"
 readme = "README.md"
-version.workspace = true
+version = "0.2.3"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

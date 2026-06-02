@@ -2,7 +2,7 @@
 name = "atrg-firehose"
 description = "AT Protocol firehose consumer: subscribeRepos relay subscription with CAR decoding for at-rust-go"
 readme = "README.md"
-version.workspace = true
+version = "0.2.3"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

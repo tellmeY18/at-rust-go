@@ -1,7 +1,7 @@
 [package]
 name = "social-example"
 description = "Social API scaffold example for at-rust-go"
-version.workspace = true
+version = "0.2.3"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
