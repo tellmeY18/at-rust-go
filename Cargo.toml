@@ -22,7 +22,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.2"
+version = "0.2.3"
 edition = "2021"
 license = "LGPL-3.0-only"
 repository = "https://github.com/tellmeY18/at-rust-go"
@@ -36,20 +36,20 @@ rust-version = "1.80"
 # pulling them in transitively (e.g. atrg-repo → atrg-core) gets a working
 # default backend (`sqlite`). Crates that want to override the feature set
 # must do so locally with `default-features = false`.
-atrg-core = { path = "crates/atrg-core", version = "0.2.2", default-features = true }
-atrg-auth = { path = "crates/atrg-auth", version = "0.2.2", default-features = true }
-atrg-stream = { path = "crates/atrg-stream", version = "0.2.2" }
-atrg-db = { path = "crates/atrg-db", version = "0.2.2", default-features = true }
-atrg-xrpc = { path = "crates/atrg-xrpc", version = "0.2.2" }
-atrg-identity = { path = "crates/atrg-identity", version = "0.2.2" }
-atrg-codegen = { path = "crates/atrg-codegen", version = "0.2.2" }
-atrg-testing = { path = "crates/atrg-testing", version = "0.2.2" }
-atrg-repo = { path = "crates/atrg-repo", version = "0.2.2" }
-atrg-firehose = { path = "crates/atrg-firehose", version = "0.2.2" }
-atrg-feed = { path = "crates/atrg-feed", version = "0.2.2" }
-atrg-label = { path = "crates/atrg-label", version = "0.2.2" }
-atrg-blob = { path = "crates/atrg-blob", version = "0.2.2" }
-atrg-email = { path = "crates/atrg-email", version = "0.2.2" }
+atrg-core = { path = "crates/atrg-core", version = "0.2.3", default-features = true }
+atrg-auth = { path = "crates/atrg-auth", version = "0.2.3", default-features = true }
+atrg-stream = { path = "crates/atrg-stream", version = "0.2.3" }
+atrg-db = { path = "crates/atrg-db", version = "0.2.3", default-features = true }
+atrg-xrpc = { path = "crates/atrg-xrpc", version = "0.2.3" }
+atrg-identity = { path = "crates/atrg-identity", version = "0.2.3" }
+atrg-codegen = { path = "crates/atrg-codegen", version = "0.2.3" }
+atrg-testing = { path = "crates/atrg-testing", version = "0.2.3" }
+atrg-repo = { path = "crates/atrg-repo", version = "0.2.3" }
+atrg-firehose = { path = "crates/atrg-firehose", version = "0.2.3" }
+atrg-feed = { path = "crates/atrg-feed", version = "0.2.3" }
+atrg-label = { path = "crates/atrg-label", version = "0.2.3" }
+atrg-blob = { path = "crates/atrg-blob", version = "0.2.3" }
+atrg-email = { path = "crates/atrg-email", version = "0.2.3" }
 
 # AT Protocol — DO NOT reimplement anything these provide
 atproto-identity = "0.14.2"
